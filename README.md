@@ -1,11 +1,33 @@
-<div align="center">
+# ALCO Hub - Desktop & Web
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Pusat kerja ekosistem ALCO untuk digital marketer pemula.
 
-  <h1>Built with AI Studio</h2>
+## Menjalankan & Membangun Aplikasi Desktop (Windows)
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+### 1. Instalasi Dependensi
+```bash
+npm install
+```
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+### 2. Menjalankan Mode Development Desktop
+Menjalankan server Vite lokal dan membuka jendela desktop Electron secara bersamaan:
+```bash
+npm run desktop:dev
+```
 
-</div>
+### 3. Membangun Installer Desktop Windows (.exe NSIS)
+Lakukan perintah berikut di lingkungan Windows atau mesin lokal Anda:
+```bash
+npm run desktop:build
+```
+
+Setelah proses build selesai, file installer Windows (`.exe` NSIS) akan tersedia di dalam folder output:
+```text
+dist-electron/
+```
+
+## Menjalankan Mode Web
+```bash
+npm run dev
+```
+Akses via browser pada port default (`http://localhost:3000` atau konfigurasi environment Anda).
