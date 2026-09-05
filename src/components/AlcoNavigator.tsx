@@ -34,7 +34,7 @@ interface AlcoNavigatorProps {
   apiKey: string;
   apps: EcosystemApp[];
   onRequestApiKey: () => void;
-  onOpenAppUrl: (url: string) => void;
+  onOpenAppUrl: (app: EcosystemApp) => void;
 }
 
 const QUICK_CHOICES = [
@@ -381,14 +381,14 @@ export const AlcoNavigator: React.FC<AlcoNavigatorProps> = ({
                     </div>
                     {(() => {
                       const matchedApp = getAppById(adviceResult.recommendedAppId);
-                      const isAvailable = Boolean(matchedApp?.url && matchedApp.url.trim().length > 0);
+                       const isAvailable = Boolean(matchedApp && (matchedApp.launchMode === 'desktop' || matchedApp.url.trim().length > 0));
 
                       if (isAvailable && matchedApp) {
                         return (
                           <button
                             id="navigator-cta-open-app-btn"
                             type="button"
-                            onClick={() => onOpenAppUrl(matchedApp.url)}
+                             onClick={() => onOpenAppUrl(matchedApp)}
                             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 text-xs font-bold transition-all shadow-xs"
                           >
                             <span>{matchedApp.buttonLabel}</span>
@@ -547,7 +547,7 @@ export const AlcoNavigator: React.FC<AlcoNavigatorProps> = ({
                         {hasAppUrl && matchedApp && (
                           <button
                             type="button"
-                            onClick={() => onOpenAppUrl(matchedApp.url)}
+                            onClick={() => onOpenAppUrl(matchedApp)}
                             title={`Buka ${matchedApp.name}`}
                             className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
                           >

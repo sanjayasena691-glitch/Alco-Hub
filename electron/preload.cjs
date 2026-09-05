@@ -23,4 +23,6 @@ contextBridge.exposeInMainWorld('alcoHub', {
     }
     return Promise.reject(new Error('Invalid or unpermitted URL protocol. Hanya HTTPS yang diperbolehkan.'));
   },
+  openDesktopApp: (appId) => ipcRenderer.invoke('open-desktop-app', appId),
+  checkContentEngineUpdate: () => ipcRenderer.invoke('check-content-engine-update'),
 });

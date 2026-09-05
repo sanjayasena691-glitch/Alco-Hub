@@ -16,16 +16,36 @@ import {
   HelpCircle,
   Compass,
   Key,
+  AlertCircle,
+  Download,
 } from 'lucide-react';
 import { ECOSYSTEM_CONFIG, EcosystemApp } from './config/ecosystemApps';
 import { AlcoNavigator } from './components/AlcoNavigator';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { getUserApiKey, getMaskedApiKey } from './services/aiNavigatorService';
 
+type ContentEngineUpdateStatus = 'checking' | 'up-to-date' | 'update-available' | 'unable-to-check';
+
+interface ContentEngineUpdateResult {
+  success: boolean;
+  status: Exclude<ContentEngineUpdateStatus, 'checking'>;
+  error?: string;
+  localVersion?: string | null;
+  latestVersion?: string;
+  registry?: {
+    latestVersion: string;
+    status: string;
+    downloadUrl: string;
+    sha256: string;
+  };
+}
+
 declare global {
   interface Window {
     alcoHub?: {
       openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+      openDesktopApp: (appId: string) => Promise<{ success: boolean; error?: string }>;
+      checkContentEngineUpdate?: () => Promise<ContentEngineUpdateResult>;
     };
   }
 }
@@ -34,13 +54,53 @@ export default function App() {
   const { hubName, hubSubtitle, flowDescription, apps, chooserAdvice } = ECOSYSTEM_CONFIG;
   const [apiKey, setApiKey] = useState<string>('');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [contentEngineUpdate, setContentEngineUpdate] = useState<ContentEngineUpdateResult | null>(null);
+  const [contentEngineUpdateStatus, setContentEngineUpdateStatus] = useState<ContentEngineUpdateStatus>('checking');
 
   useEffect(() => {
     const key = getUserApiKey();
     setApiKey(key);
   }, []);
 
-  const handleOpenUrl = (url: string) => {
+  useEffect(() => {
+    let isMounted = true;
+
+    if (!window.alcoHub?.checkContentEngineUpdate) {
+      setContentEngineUpdateStatus('unable-to-check');
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    window.alcoHub.checkContentEngineUpdate()
+      .then((result) => {
+        if (!isMounted) return;
+        setContentEngineUpdate(result);
+        setContentEngineUpdateStatus(result.status || 'unable-to-check');
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setContentEngineUpdateStatus('unable-to-check');
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleOpenAppUrl = (app: EcosystemApp) => {
+    if (app.launchMode === 'desktop') {
+      if (!window.alcoHub?.openDesktopApp) {
+        window.alert(`${app.name} desktop hanya dapat dibuka dari aplikasi ALCO Hub.`);
+        return;
+      }
+      window.alcoHub.openDesktopApp(app.id).then((result) => {
+        if (!result.success) window.alert(result.error || `${app.name} tidak dapat dibuka.`);
+      }).catch(() => window.alert(`${app.name} tidak dapat dibuka.`));
+      return;
+    }
+
+    const url = app.url;
     if (!url || !url.trim()) return;
 
     if (window.alcoHub && typeof window.alcoHub.openExternal === 'function') {
@@ -53,11 +113,21 @@ export default function App() {
     }
   };
 
-  const handleOpenApp = (e: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+  const handleOpenApp = (e: React.MouseEvent<HTMLAnchorElement>, app: EcosystemApp) => {
+    if (app.launchMode === 'desktop') {
+      e.preventDefault();
+      handleOpenAppUrl(app);
+      return;
+    }
+
     if (window.alcoHub && typeof window.alcoHub.openExternal === 'function') {
       e.preventDefault();
-      handleOpenUrl(url);
+      handleOpenAppUrl(app);
     }
+  };
+
+  const handleUpdatePlaceholder = () => {
+    window.alert('Update installer belum diaktifkan. Tahap ini hanya mengecek ketersediaan update.');
   };
 
   const renderIcon = (iconName: EcosystemApp['iconName']) => {
@@ -184,7 +254,7 @@ export default function App() {
           apiKey={apiKey}
           apps={apps}
           onRequestApiKey={() => setIsApiKeyModalOpen(true)}
-          onOpenAppUrl={handleOpenUrl}
+          onOpenAppUrl={handleOpenAppUrl}
         />
 
         {/* Section 3: "Aplikasi ALCO" (App Cards Grid) */}
@@ -200,7 +270,10 @@ export default function App() {
 
           <div id="apps-card-grid" className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
             {apps.map((app) => {
-              const isAvailable = Boolean(app.url && app.url.trim().length > 0);
+              const isAvailable = app.launchMode === 'desktop' || Boolean(app.url && app.url.trim().length > 0);
+              const isContentEngine = app.id === 'content-engine';
+              const updateStatus = isContentEngine ? contentEngineUpdateStatus : null;
+              const latestVersion = contentEngineUpdate?.latestVersion || contentEngineUpdate?.registry?.latestVersion;
 
               return (
                 <article
@@ -217,7 +290,39 @@ export default function App() {
                       >
                         {app.stageLabel}
                       </span>
-                      {isAvailable ? (
+                      {isContentEngine && updateStatus === 'update-available' ? (
+                        <span
+                          id={`app-status-${app.id}`}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200/70 shrink-0"
+                        >
+                          <AlertCircle className="w-3 h-3 text-amber-600" aria-hidden="true" />
+                          Update Available
+                        </span>
+                      ) : isContentEngine && updateStatus === 'unable-to-check' ? (
+                        <span
+                          id={`app-status-${app.id}`}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 shrink-0"
+                        >
+                          <Clock className="w-3 h-3 text-slate-400" aria-hidden="true" />
+                          Unable to Check
+                        </span>
+                      ) : isContentEngine && updateStatus === 'up-to-date' ? (
+                        <span
+                          id={`app-status-${app.id}`}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 shrink-0"
+                        >
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" aria-hidden="true" />
+                          Up to Date
+                        </span>
+                      ) : isContentEngine && updateStatus === 'checking' ? (
+                        <span
+                          id={`app-status-${app.id}`}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-sky-50 text-sky-700 border border-sky-200/70 shrink-0"
+                        >
+                          <Clock className="w-3 h-3 text-sky-500" aria-hidden="true" />
+                          Checking
+                        </span>
+                      ) : isAvailable ? (
                         <span
                           id={`app-status-${app.id}`}
                           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60 shrink-0"
@@ -261,17 +366,64 @@ export default function App() {
                     >
                       {app.description}
                     </p>
+
+                    {isContentEngine && updateStatus !== 'checking' ? (
+                      <div
+                        id="content-engine-update-checker"
+                        className={`rounded-lg border p-3 text-xs ${
+                          updateStatus === 'update-available'
+                            ? 'bg-amber-50 border-amber-200/80 text-amber-900'
+                            : updateStatus === 'up-to-date'
+                              ? 'bg-emerald-50 border-emerald-200/80 text-emerald-900'
+                              : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <div className="font-semibold">
+                          {updateStatus === 'update-available'
+                            ? 'Update tersedia untuk Content Engine.'
+                            : updateStatus === 'up-to-date'
+                              ? 'Content Engine sudah versi terbaru.'
+                              : 'Update belum dapat dicek.'}
+                        </div>
+                        {updateStatus === 'update-available' ? (
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <div>
+                              <span className="block text-[10px] uppercase tracking-wide opacity-70">Installed Version</span>
+                              <span className="font-bold">{contentEngineUpdate?.localVersion || 'Unknown'}</span>
+                            </div>
+                            <div>
+                              <span className="block text-[10px] uppercase tracking-wide opacity-70">Latest Version</span>
+                              <span className="font-bold">{latestVersion || 'Unknown'}</span>
+                            </div>
+                          </div>
+                        ) : null}
+                        {updateStatus === 'unable-to-check' && contentEngineUpdate?.error ? (
+                          <p className="mt-1.5 leading-relaxed">{contentEngineUpdate.error}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
 
                   {/* Card Bottom: Action Button */}
-                  <div className="pt-6 mt-2 border-t border-slate-100">
+                  <div className="pt-6 mt-2 border-t border-slate-100 space-y-2.5">
+                    {isContentEngine && updateStatus === 'update-available' ? (
+                      <button
+                        id="content-engine-update-placeholder-btn"
+                        type="button"
+                        onClick={handleUpdatePlaceholder}
+                        className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-500 text-amber-950 hover:bg-amber-400 text-sm font-bold tracking-tight transition-colors shadow-xs active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+                      >
+                        <span>Update</span>
+                        <Download className="w-4 h-4 text-amber-950" aria-hidden="true" />
+                      </button>
+                    ) : null}
                     {isAvailable ? (
                       <a
                         id={`app-btn-${app.id}`}
-                        href={app.url}
+                        href={app.url || '#'}
                         target="_blank"
                         rel="noopener noreferrer"
-                        onClick={(e) => handleOpenApp(e, app.url)}
+                        onClick={(e) => handleOpenApp(e, app)}
                         className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 text-sm font-semibold tracking-tight transition-colors shadow-xs active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
                       >
                         <span>{app.buttonLabel}</span>
@@ -362,7 +514,7 @@ export default function App() {
         isOpen={isApiKeyModalOpen}
         onClose={() => setIsApiKeyModalOpen(false)}
         onSaved={(newKey) => setApiKey(newKey)}
-        onOpenExternalUrl={handleOpenUrl}
+        onOpenExternalUrl={handleOpenAppUrl}
       />
     </div>
   );
