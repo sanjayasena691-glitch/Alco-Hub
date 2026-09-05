@@ -12,6 +12,13 @@ fs.mkdirSync(staging, { recursive: true });
 fs.cpSync(path.join(root, 'dist'), path.join(staging, 'dist'), { recursive: true });
 fs.cpSync(path.join(root, 'electron'), path.join(staging, 'electron'), { recursive: true });
 
+const isWin = process.platform === 'win32';
+const hasWine = !isWin && spawnSync('which', ['wine']).status === 0;
+
+const targets = isWin || hasWine
+  ? [{ target: 'nsis', arch: ['x64'] }, { target: 'dir', arch: ['x64'] }]
+  : [{ target: 'dir', arch: ['x64'] }, { target: 'zip', arch: ['x64'] }];
+
 const packageJson = {
   name: 'alco-hub-desktop',
   version: '1.0.0',
@@ -25,7 +32,7 @@ const packageJson = {
     directories: { output: '../dist-electron' },
     files: ['dist/**/*', 'electron/**/*'],
     asar: true,
-    win: { target: [{ target: 'nsis', arch: ['x64'] }] },
+    win: { target: targets },
     nsis: {
       oneClick: false,
       allowToChangeInstallationDirectory: true,
