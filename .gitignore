@@ -1,6 +1,8 @@
 node_modules/
 build/
 dist/
+dist-electron/
+.electron-build/
 coverage/
 .DS_Store
 *.log
