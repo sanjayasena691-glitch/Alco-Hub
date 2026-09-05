@@ -242,23 +242,17 @@ function fetchJsonWithTimeout(rawUrl, timeoutMs = 5000, redirectCount = 0) {
 }
 
 function getContentEngineRegistryEntry(registry) {
-  const possibleEntries = [
-    registry,
-    registry?.contentEngine,
-    registry?.['content-engine'],
-    registry?.['alco-content-engine'],
-    registry?.apps?.contentEngine,
-    registry?.apps?.['content-engine'],
-    registry?.apps?.['alco-content-engine'],
-    registry?.products?.contentEngine,
-    registry?.products?.['content-engine'],
-    registry?.products?.['alco-content-engine'],
-  ];
-
-  return possibleEntries.find((entry) => entry && typeof entry === 'object') || null;
+  if (!registry || typeof registry !== 'object') {
+    return null;
+  }
+  const entry = registry?.apps?.['alco-content-engine'];
+  return entry && typeof entry === 'object' ? entry : null;
 }
 
 function validateRegistryEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return { valid: false, error: 'Entry ALCO Content Engine tidak ditemukan di registry.' };
+  }
   const requiredFields = ['latestVersion', 'status', 'downloadUrl', 'sha256'];
   const missingFields = requiredFields.filter((field) => typeof entry?.[field] !== 'string' || entry[field].trim().length === 0);
   if (missingFields.length > 0) {
