@@ -100,7 +100,11 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               id="alco-brand-badge"
               className="w-9 h-9 rounded-lg bg-gradient-to-tr from-slate-900 to-indigo-900 text-white border border-indigo-500/30 flex items-center justify-center font-black text-base tracking-wider shadow-inner group-hover:border-indigo-400/50 transition-colors"
             >
-              A
+              <img
+                src="/alco-hub-icon.png"
+                alt="ALCO Hub"
+                className="w-full h-full rounded-lg object-cover"
+              />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
