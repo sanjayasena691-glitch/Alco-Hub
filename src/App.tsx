@@ -25,10 +25,12 @@ import {
   syncCatalogWithSupabase,
   getSyncMeta,
   getAdminSession,
+  checkAndRestoreOwnerSession,
   getUserLicenses,
   getContactConfig,
   isAppLicensed,
 } from './services/storeService';
+import { getSupabase } from './services/supabaseClient';
 
 import { HeaderNav } from './components/HeaderNav';
 import { HomeView } from './components/HomeView';
@@ -59,18 +61,63 @@ export default function App() {
   const [contentEngineUpdate, setContentEngineUpdate] = useState<ContentEngineUpdateResult | null>(null);
   const [contentEngineUpdateStatus, setContentEngineUpdateStatus] = useState<ContentEngineUpdateStatus>('checking');
 
-  // 1. Initial Load: Load local cache immediately, then perform background Supabase catalog sync
+  // 1. Initial Load: Restore Owner session from Supabase Auth + admin_users, load cache, then sync Supabase catalog
   useEffect(() => {
-    // Read local states
+    // Read local cache immediately for zero-delay UI rendering
     setApps(getCachedApps());
     setUserLicenses(getUserLicenses());
     setContactConfig(getContactConfig());
     setSyncMeta(getSyncMeta());
-    setAdminSession(getAdminSession());
     setApiKey(getUserApiKey());
 
-    // Background sync catalog with Supabase
-    handleCatalogSync(false);
+    const initAuthAndCatalog = async () => {
+      // Validasi session Owner terhadap Supabase Auth & public.admin_users
+      const restored = await checkAndRestoreOwnerSession();
+      setAdminSession(restored);
+
+      // Public user hanya menerima published = true, Owner menerima semua draft
+      const res = await syncCatalogWithSupabase({
+        force: false,
+        isAdmin: restored.isAuthenticated,
+      });
+      setApps(res.apps);
+      setSyncMeta(res.syncMeta);
+    };
+
+    initAuthAndCatalog();
+
+    // Listen to Supabase Auth changes (signOut / token refresh)
+    const client = getSupabase();
+    let authSub: any = null;
+    if (client) {
+      const { data } = client.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_OUT') {
+          const guestSession: AdminAuthSession = {
+            isAuthenticated: false,
+            userId: null,
+            email: null,
+            role: 'guest',
+            mode: 'none',
+          };
+          setAdminSession(guestSession);
+          // Public user: reload catalog to hide drafts
+          const res = await syncCatalogWithSupabase({ force: true, isAdmin: false });
+          setApps(res.apps);
+          setSyncMeta(res.syncMeta);
+        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          const verified = await checkAndRestoreOwnerSession();
+          setAdminSession(verified);
+          const res = await syncCatalogWithSupabase({ force: true, isAdmin: verified.isAuthenticated });
+          setApps(res.apps);
+          setSyncMeta(res.syncMeta);
+        }
+      });
+      authSub = data.subscription;
+    }
+
+    return () => {
+      authSub?.unsubscribe?.();
+    };
   }, []);
 
   // 2. Check local binary updates on initial load

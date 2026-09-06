@@ -258,22 +258,44 @@ export async function syncCatalogWithSupabase(
       throw new Error(appsError.message);
     }
 
-    // 4. Query tabel kontak ALCO
-    const { data: contactData } = await client
-      .from('alco_config')
-      .select('*')
-      .eq('id', 'contact')
-      .maybeSingle();
+    // 4. Query tabel kontak ALCO (public.alco_contact)
+    try {
+      const { data: contactData, error: contactError } = await client
+        .from('alco_contact')
+        .select('*')
+        .limit(1)
+        .maybeSingle();
 
-    if (contactData) {
-      const updatedContact: ContactAlcoConfig = {
-        whatsappNumber: contactData.whatsapp || DEFAULT_CONTACT_CONFIG.whatsappNumber,
-        supportEmail: contactData.email || DEFAULT_CONTACT_CONFIG.supportEmail,
-        companyName: contactData.company_name || DEFAULT_CONTACT_CONFIG.companyName,
-        ownerName: DEFAULT_CONTACT_CONFIG.ownerName,
-        defaultPurchaseMessage: contactData.default_purchase_message,
-      };
-      saveContactConfigLocal(updatedContact);
+      if (contactData && !contactError) {
+        const updatedContact: ContactAlcoConfig = {
+          whatsappNumber: contactData.whatsapp || contactData.whatsapp_number || DEFAULT_CONTACT_CONFIG.whatsappNumber,
+          supportEmail: contactData.email || contactData.support_email || DEFAULT_CONTACT_CONFIG.supportEmail,
+          companyName: contactData.company_name || DEFAULT_CONTACT_CONFIG.companyName,
+          ownerName: DEFAULT_CONTACT_CONFIG.ownerName,
+          defaultPurchaseMessage: contactData.default_purchase_message || DEFAULT_CONTACT_CONFIG.defaultPurchaseMessage,
+        };
+        saveContactConfigLocal(updatedContact);
+      } else {
+        // Fallback to alco_config if alco_contact is not yet created
+        const { data: fallbackContact } = await client
+          .from('alco_config')
+          .select('*')
+          .eq('id', 'contact')
+          .maybeSingle();
+
+        if (fallbackContact) {
+          const updatedContact: ContactAlcoConfig = {
+            whatsappNumber: fallbackContact.whatsapp || DEFAULT_CONTACT_CONFIG.whatsappNumber,
+            supportEmail: fallbackContact.email || DEFAULT_CONTACT_CONFIG.supportEmail,
+            companyName: fallbackContact.company_name || DEFAULT_CONTACT_CONFIG.companyName,
+            ownerName: DEFAULT_CONTACT_CONFIG.ownerName,
+            defaultPurchaseMessage: fallbackContact.default_purchase_message,
+          };
+          saveContactConfigLocal(updatedContact);
+        }
+      }
+    } catch (contactErr) {
+      console.warn('[ALCO Hub] Error querying alco_contact:', contactErr);
     }
 
     // 5. Transform data dan update cache
@@ -314,11 +336,12 @@ export async function syncCatalogWithSupabase(
 }
 
 // ==============================================================================
-// 4. OWNER / ADMIN ACTIONS (CLOUD MUTATIONS)
+// 4. OWNER / ADMIN ACTIONS (CLOUD MUTATIONS DIRECTLY TO SUPABASE)
 // ==============================================================================
 
 /**
- * Menyimpan / Menerbitkan aplikasi ke Supabase (atau fallback ke cache jika Supabase unconfigured)
+ * Menyimpan / Menerbitkan aplikasi ke Supabase (public.apps)
+ * Jika offline atau koneksi gagal, TIDAK pura-pura tersimpan ke server.
  */
 export async function saveAppToCloud(
   app: EcosystemApp,
@@ -326,124 +349,168 @@ export async function saveAppToCloud(
 ): Promise<{ success: boolean; message: string; app: EcosystemApp }> {
   const client = getSupabase();
 
-  // 1. Simpan ke local cache terlebih dahulu
-  const cached = getCachedApps();
-  let updatedList: EcosystemApp[];
-  if (isNew) {
-    const existingIndex = cached.findIndex((a) => a.id === app.id);
-    if (existingIndex >= 0) {
-      updatedList = cached.map((a) => (a.id === app.id ? app : a));
-    } else {
-      updatedList = [...cached, app];
-    }
-  } else {
-    updatedList = cached.map((a) => (a.id === app.id ? app : a));
+  if (!client || !isSupabaseConfigured()) {
+    return {
+      success: false,
+      message: 'Koneksi Supabase belum dikonfigurasi. Perubahan tidak dapat disimpan ke server cloud.',
+      app,
+    };
   }
-  saveCatalogToCache(updatedList);
 
-  // 2. Jika Supabase aktif, kirim ke database
-  if (client && isSupabaseConfigured()) {
-    try {
-      const dbRow = mapAppToDbRow(app);
-      const { error } = await client.from('apps').upsert(dbRow, { onConflict: 'id' });
+  try {
+    const dbRow = mapAppToDbRow(app);
+    const { error } = await client.from('apps').upsert(dbRow, { onConflict: 'id' });
 
-      if (error) {
-        return {
-          success: false,
-          message: `Gagal menyimpan ke Supabase: ${error.message}. Perubahan disimpan ke cache lokal.`,
-          app,
-        };
-      }
-
-      return {
-        success: true,
-        message: `Aplikasi "${app.name}" berhasil disimpan ke Cloud Supabase!`,
-        app,
-      };
-    } catch (err: any) {
+    if (error) {
+      console.warn('[ALCO Hub] Failed to save app to Supabase:', error);
       return {
         success: false,
-        message: `Error jaringan: ${err.message}. Perubahan tersimpan di cache lokal.`,
+        message: `Gagal menyimpan ke Supabase: ${error.message} (Periksa RLS / skema database).`,
         app,
       };
     }
-  }
 
-  return {
-    success: true,
-    message: `Aplikasi "${app.name}" disimpan ke cache lokal (Supabase belum dihubungkan).`,
-    app,
-  };
+    // Update local cache setelah berhasil di Supabase
+    const cached = getCachedApps();
+    let updatedList: EcosystemApp[];
+    if (isNew) {
+      const existingIndex = cached.findIndex((a) => a.id === app.id);
+      if (existingIndex >= 0) {
+        updatedList = cached.map((a) => (a.id === app.id ? app : a));
+      } else {
+        updatedList = [...cached, app];
+      }
+    } else {
+      updatedList = cached.map((a) => (a.id === app.id ? app : a));
+    }
+    saveCatalogToCache(updatedList);
+
+    return {
+      success: true,
+      message: `Aplikasi "${app.name}" berhasil disimpan ke Supabase! (Status: ${app.published ? 'Published' : 'Draft'})`,
+      app,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Koneksi jaringan terputus: ${err.message || 'Offline'}. Perubahan belum dapat disimpan ke server.`,
+      app,
+    };
+  }
 }
 
 /**
- * Menghapus aplikasi dari Cloud & Cache
+ * Menghapus aplikasi dari Supabase (public.apps) & Cache
  */
 export async function deleteAppFromCloud(appId: string): Promise<{ success: boolean; message: string }> {
-  const cached = getCachedApps();
-  const updatedList = cached.filter((a) => a.id !== appId);
-  saveCatalogToCache(updatedList);
-
   const client = getSupabase();
-  if (client && isSupabaseConfigured()) {
-    try {
-      const { error } = await client.from('apps').delete().eq('id', appId);
-      if (error) {
-        return { success: false, message: `Gagal menghapus dari Supabase: ${error.message}` };
-      }
-    } catch (err: any) {
-      return { success: false, message: `Error jaringan: ${err.message}` };
-    }
+
+  if (!client || !isSupabaseConfigured()) {
+    return {
+      success: false,
+      message: 'Koneksi Supabase belum dikonfigurasi. Tidak dapat menghapus dari server.',
+    };
   }
 
-  return { success: true, message: 'Aplikasi berhasil dihapus.' };
+  try {
+    const { error } = await client.from('apps').delete().eq('id', appId);
+    if (error) {
+      return {
+        success: false,
+        message: `Gagal menghapus dari Supabase: ${error.message}`,
+      };
+    }
+
+    const cached = getCachedApps();
+    const updatedList = cached.filter((a) => a.id !== appId);
+    saveCatalogToCache(updatedList);
+
+    return { success: true, message: 'Aplikasi berhasil dihapus dari katalog Supabase.' };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Gagal menghapus (Offline): ${err.message || 'Network error'}`,
+    };
+  }
 }
 
 /**
- * Mengubah status publish/unpublish aplikasi di Cloud & Cache
+ * Mengubah status publish/unpublish aplikasi di Supabase (public.apps) & Cache
  */
 export async function togglePublishAppInCloud(
   appId: string,
   published: boolean
 ): Promise<{ success: boolean; message: string }> {
-  const cached = getCachedApps();
-  const updatedList = cached.map((a) => (a.id === appId ? { ...a, published } : a));
-  saveCatalogToCache(updatedList);
-
   const client = getSupabase();
-  if (client && isSupabaseConfigured()) {
-    try {
-      const { error } = await client
-        .from('apps')
-        .update({ published, updated_at: new Date().toISOString() })
-        .eq('id', appId);
 
-      if (error) {
-        return { success: false, message: `Gagal mengubah status di Supabase: ${error.message}` };
-      }
-    } catch (err: any) {
-      return { success: false, message: `Error jaringan: ${err.message}` };
-    }
+  if (!client || !isSupabaseConfigured()) {
+    return {
+      success: false,
+      message: 'Koneksi Supabase belum dikonfigurasi. Tidak dapat mengubah status di server.',
+    };
   }
 
-  return {
-    success: true,
-    message: published ? 'Aplikasi berhasil DITERBITKAN ke seluruh user!' : 'Aplikasi diubah menjadi DRAFT (tersembunyi dari user).',
-  };
+  try {
+    const { error } = await client
+      .from('apps')
+      .update({ published, updated_at: new Date().toISOString() })
+      .eq('id', appId);
+
+    if (error) {
+      return {
+        success: false,
+        message: `Gagal mengubah status publish di Supabase: ${error.message}`,
+      };
+    }
+
+    const cached = getCachedApps();
+    const updatedList = cached.map((a) => (a.id === appId ? { ...a, published } : a));
+    saveCatalogToCache(updatedList);
+
+    return {
+      success: true,
+      message: published
+        ? 'Aplikasi berhasil DITERBITKAN (Published)! Kini tampil di Store seluruh user.'
+        : 'Aplikasi diubah menjadi DRAFT (Unpublished). Hanya terlihat oleh Owner.',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Gagal mengubah status publish (Offline): ${err.message}`,
+    };
+  }
 }
 
 /**
- * Menyimpan konfigurasi kontak resmi ALCO
+ * Menyimpan konfigurasi kontak resmi ALCO ke Supabase (public.alco_contact)
  */
 export async function saveContactConfig(
   config: ContactAlcoConfig
 ): Promise<{ success: boolean; message: string }> {
-  saveContactConfigLocal(config);
-
   const client = getSupabase();
-  if (client && isSupabaseConfigured()) {
-    try {
-      const { error } = await client.from('alco_config').upsert({
+
+  if (!client || !isSupabaseConfigured()) {
+    saveContactConfigLocal(config);
+    return {
+      success: false,
+      message: 'Koneksi Supabase belum aktif. Kontak hanya tersimpan secara lokal sementara.',
+    };
+  }
+
+  try {
+    // 1. Coba simpan ke tabel public.alco_contact
+    const { error: contactError } = await client.from('alco_contact').upsert({
+      id: 'contact',
+      whatsapp: config.whatsappNumber,
+      email: config.supportEmail,
+      company_name: config.companyName,
+      default_purchase_message: config.defaultPurchaseMessage,
+      updated_at: new Date().toISOString(),
+    });
+
+    if (contactError) {
+      // Fallback ke tabel alco_config jika alco_contact belum dibuat
+      const { error: fallbackError } = await client.from('alco_config').upsert({
         id: 'contact',
         whatsapp: config.whatsappNumber,
         email: config.supportEmail,
@@ -452,23 +519,30 @@ export async function saveContactConfig(
         updated_at: new Date().toISOString(),
       });
 
-      if (error) {
-        return { success: false, message: `Gagal menyimpan kontak ke Supabase: ${error.message}` };
+      if (fallbackError) {
+        return {
+          success: false,
+          message: `Gagal menyimpan kontak ke Supabase: ${contactError.message}`,
+        };
       }
-    } catch (err: any) {
-      return { success: false, message: `Error jaringan: ${err.message}` };
     }
-  }
 
-  return { success: true, message: 'Konfigurasi kontak resmi ALCO berhasil diperbarui.' };
+    saveContactConfigLocal(config);
+    return { success: true, message: 'Kontak resmi ALCO berhasil disimpan ke Supabase cloud!' };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Gagal menyimpan kontak (Offline): ${err.message}`,
+    };
+  }
 }
 
 // ==============================================================================
-// 5. ADMIN AUTHENTICATION & SECURITY
+// 5. OWNER AUTHENTICATION & ROLE VALIDATION (SUPABASE AUTH + public.admin_users)
 // ==============================================================================
 
 /**
- * Membaca session admin aktif
+ * Membaca session admin/owner dari penyimpanan lokal
  */
 export function getAdminSession(): AdminAuthSession {
   try {
@@ -479,6 +553,7 @@ export function getAdminSession(): AdminAuthSession {
   } catch {}
   return {
     isAuthenticated: false,
+    userId: null,
     email: null,
     role: 'guest',
     mode: 'none',
@@ -486,7 +561,7 @@ export function getAdminSession(): AdminAuthSession {
 }
 
 /**
- * Menyimpan session admin
+ * Menyimpan session admin/owner
  */
 export function saveAdminSession(session: AdminAuthSession): void {
   try {
@@ -495,86 +570,223 @@ export function saveAdminSession(session: AdminAuthSession): void {
 }
 
 /**
- * Login Owner / Admin via Supabase Auth atau Preview Admin Mode
+ * Memvalidasi apakah user_id terdaftar di tabel public.admin_users dengan role = 'owner'
  */
-export async function adminSignIn(
-  email: string,
-  password?: string,
-  previewPasscode?: string
-): Promise<{ success: boolean; message: string; session: AdminAuthSession }> {
-  const cleanEmail = email.trim();
+export async function validateAdminUser(
+  userId: string
+): Promise<{ isOwner: boolean; role?: string; error?: string }> {
   const client = getSupabase();
+  if (!client) {
+    return { isOwner: false, error: 'Supabase client belum terhubung' };
+  }
 
-  // Opsi A: Login menggunakan Supabase Auth (Production / Configured)
-  if (client && isSupabaseConfigured() && password) {
-    try {
-      const { data, error } = await client.auth.signInWithPassword({
-        email: cleanEmail,
-        password: password.trim(),
-      });
+  try {
+    const { data, error } = await client
+      .from('admin_users')
+      .select('user_id, role')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-      if (error) {
-        return {
-          success: false,
-          message: `Login Supabase gagal: ${error.message}`,
-          session: { isAuthenticated: false, email: null, role: 'guest', mode: 'none' },
-        };
-      }
-
-      const session: AdminAuthSession = {
-        isAuthenticated: true,
-        email: data.user?.email || cleanEmail,
-        token: data.session?.access_token,
-        role: 'admin',
-        mode: 'supabase-auth',
-      };
-      saveAdminSession(session);
-      return { success: true, message: 'Berhasil login sebagai Owner / Admin (Supabase Auth)', session };
-    } catch (err: any) {
-      return {
-        success: false,
-        message: `Error otentikasi: ${err.message}`,
-        session: { isAuthenticated: false, email: null, role: 'guest', mode: 'none' },
-      };
+    if (error) {
+      console.warn('[ALCO Hub] Error querying admin_users table:', error);
+      return { isOwner: false, error: error.message };
     }
-  }
 
-  // Opsi B: Preview / Developer Passcode Login (ketika Supabase belum di-setup)
-  const isPreviewPasscodeValid = previewPasscode === 'alco2026' || previewPasscode === 'admin' || password === 'alco2026';
-  if (isPreviewPasscodeValid || cleanEmail.toLowerCase().includes('alco') || cleanEmail.toLowerCase().includes('admin')) {
-    const session: AdminAuthSession = {
-      isAuthenticated: true,
-      email: cleanEmail || 'owner@aladzancorpora.com',
-      role: 'admin',
-      mode: 'preview-admin',
-    };
-    saveAdminSession(session);
-    return {
-      success: true,
-      message: 'Berhasil masuk ke Owner Portal (Mode Akses Terverifikasi)',
-      session,
-    };
-  }
+    if (!data) {
+      return { isOwner: false, error: 'User tidak ditemukan di tabel admin_users' };
+    }
 
-  return {
-    success: false,
-    message: 'Kredensial tidak valid. Silakan gunakan password Supabase Anda atau passcode developer "alco2026".',
-    session: { isAuthenticated: false, email: null, role: 'guest', mode: 'none' },
-  };
+    const role = (data.role || '').trim().toLowerCase();
+    if (role === 'owner') {
+      return { isOwner: true, role: 'owner' };
+    }
+
+    return { isOwner: false, role, error: `Role '${role}' bukan owner` };
+  } catch (err: any) {
+    return { isOwner: false, error: err.message || 'Gagal memverifikasi role admin_users' };
+  }
+}
+
+export type OwnerAuthStatus =
+  | 'signing-in'
+  | 'connected'
+  | 'invalid-credentials'
+  | 'access-denied'
+  | 'unconfigured'
+  | 'error';
+
+export interface OwnerAuthResult {
+  success: boolean;
+  status: OwnerAuthStatus;
+  message: string;
+  session: AdminAuthSession;
 }
 
 /**
- * Logout Admin
+ * Login Owner via Supabase Auth + Verifikasi public.admin_users
  */
-export async function adminSignOut(): Promise<void> {
+export async function ownerSignIn(
+  email: string,
+  password: string
+): Promise<OwnerAuthResult> {
+  const cleanEmail = email.trim();
+  const cleanPassword = password.trim();
+
+  const client = getSupabase();
+  if (!client || !isSupabaseConfigured()) {
+    return {
+      success: false,
+      status: 'unconfigured',
+      message: 'Supabase URL atau Anon Key belum dikonfigurasi di ALCO Hub.',
+      session: { isAuthenticated: false, userId: null, email: null, role: 'guest', mode: 'none' },
+    };
+  }
+
+  try {
+    // 1. Otentikasi kredensial via Supabase Auth
+    const { data, error } = await client.auth.signInWithPassword({
+      email: cleanEmail,
+      password: cleanPassword,
+    });
+
+    if (error || !data.user) {
+      return {
+        success: false,
+        status: 'invalid-credentials',
+        message: 'Invalid credentials. Email atau password salah.',
+        session: { isAuthenticated: false, userId: null, email: null, role: 'guest', mode: 'none' },
+      };
+    }
+
+    // 2. Verifikasi user_id di tabel public.admin_users dengan role = 'owner'
+    const { isOwner, error: roleError } = await validateAdminUser(data.user.id);
+
+    if (!isOwner) {
+      // User valid di Supabase Auth, tetapi bukan Owner di admin_users -> Access Denied & Sign Out
+      await client.auth.signOut();
+      localStorage.removeItem(STORAGE_KEY_ADMIN_SESSION);
+
+      return {
+        success: false,
+        status: 'access-denied',
+        message: 'Access denied. Akun Anda berhasil diverifikasi tetapi tidak memiliki hak akses Owner pada tabel admin_users.',
+        session: { isAuthenticated: false, userId: null, email: null, role: 'guest', mode: 'none' },
+      };
+    }
+
+    // 3. Login sukses sebagai Owner
+    const session: AdminAuthSession = {
+      isAuthenticated: true,
+      userId: data.user.id,
+      email: data.user.email || cleanEmail,
+      role: 'owner',
+      token: data.session?.access_token,
+      mode: 'supabase-auth',
+    };
+
+    saveAdminSession(session);
+
+    return {
+      success: true,
+      status: 'connected',
+      message: 'Connected as Owner. Selamat datang di Owner Portal Aladzan Corpora.',
+      session,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      status: 'error',
+      message: `Gagal login: ${err.message || 'Terjadi kesalahan jaringan'}`,
+      session: { isAuthenticated: false, userId: null, email: null, role: 'guest', mode: 'none' },
+    };
+  }
+}
+
+/**
+ * Validasi session saat app startup / reload
+ * Memastikan token Supabase Auth masih valid dan role di public.admin_users tetap 'owner'.
+ */
+export async function checkAndRestoreOwnerSession(): Promise<AdminAuthSession> {
+  const client = getSupabase();
+  if (!client || !isSupabaseConfigured()) {
+    const defaultSession: AdminAuthSession = {
+      isAuthenticated: false,
+      userId: null,
+      email: null,
+      role: 'guest',
+      mode: 'none',
+    };
+    saveAdminSession(defaultSession);
+    return defaultSession;
+  }
+
+  try {
+    // 1. Ambil session aktif dari Supabase Auth
+    const { data: { session }, error } = await client.auth.getSession();
+
+    if (error || !session || !session.user) {
+      const defaultSession: AdminAuthSession = {
+        isAuthenticated: false,
+        userId: null,
+        email: null,
+        role: 'guest',
+        mode: 'none',
+      };
+      saveAdminSession(defaultSession);
+      return defaultSession;
+    }
+
+    // 2. Validasi ulang ke tabel public.admin_users
+    const { isOwner } = await validateAdminUser(session.user.id);
+
+    if (!isOwner) {
+      await client.auth.signOut();
+      const defaultSession: AdminAuthSession = {
+        isAuthenticated: false,
+        userId: null,
+        email: null,
+        role: 'guest',
+        mode: 'none',
+      };
+      saveAdminSession(defaultSession);
+      return defaultSession;
+    }
+
+    // 3. Session Owner valid
+    const ownerSession: AdminAuthSession = {
+      isAuthenticated: true,
+      userId: session.user.id,
+      email: session.user.email || null,
+      role: 'owner',
+      token: session.access_token,
+      mode: 'supabase-auth',
+    };
+    saveAdminSession(ownerSession);
+    return ownerSession;
+  } catch (err) {
+    console.warn('[ALCO Hub] Error checking owner session on startup:', err);
+    return getAdminSession();
+  }
+}
+
+/**
+ * Logout Owner / Admin
+ */
+export async function ownerSignOut(): Promise<void> {
   const client = getSupabase();
   if (client) {
     try {
       await client.auth.signOut();
-    } catch {}
+    } catch (err) {
+      console.warn('[ALCO Hub] Error during signOut:', err);
+    }
   }
   localStorage.removeItem(STORAGE_KEY_ADMIN_SESSION);
 }
+
+// Aliases for compatibility
+export const adminSignIn = (email: string, password?: string) => ownerSignIn(email, password || '');
+export const adminSignOut = ownerSignOut;
 
 // ==============================================================================
 // 6. USER LICENSES & CONTACT (LOCAL PERSISTENCE)

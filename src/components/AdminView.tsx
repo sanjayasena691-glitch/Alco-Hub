@@ -21,6 +21,9 @@ import {
   Copy,
   Check,
   Sparkles,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -37,8 +40,9 @@ import {
   deleteAppFromCloud,
   togglePublishAppInCloud,
   saveContactConfig,
-  adminSignIn,
-  adminSignOut,
+  ownerSignIn,
+  ownerSignOut,
+  OwnerAuthStatus,
   resetCatalogToDefault,
 } from '../services/storeService';
 import {
@@ -79,6 +83,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [authStatus, setAuthStatus] = useState<OwnerAuthStatus | null>(null);
 
   // Form State for App Registration/Edit
   const [formAppId, setFormAppId] = useState('');
@@ -132,18 +137,21 @@ export const AdminView: React.FC<AdminViewProps> = ({
   };
 
   // --------------------------------------------------------------------------
-  // AUTH HANDLERS
+  // AUTH HANDLERS (SUPABASE AUTH + public.admin_users)
   // --------------------------------------------------------------------------
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
+    setAuthStatus('signing-in');
     setIsSubmitting(true);
 
-    const res = await adminSignIn(loginEmail, loginPassword, loginPassword);
+    const res = await ownerSignIn(loginEmail, loginPassword);
     setIsSubmitting(false);
+    setAuthStatus(res.status);
 
     if (res.success) {
       onAdminAuthChange(res.session);
+      onRefreshCatalog();
       showNotification(res.message);
     } else {
       setLoginError(res.message);
@@ -151,8 +159,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
   };
 
   const handleLogout = async () => {
-    await adminSignOut();
-    onAdminAuthChange({ isAuthenticated: false, email: null, role: 'guest', mode: 'none' });
+    await ownerSignOut();
+    onAdminAuthChange({ isAuthenticated: false, userId: null, email: null, role: 'guest', mode: 'none' });
+    onRefreshCatalog();
     showNotification('Anda telah keluar dari Owner Portal.');
   };
 
@@ -399,7 +408,7 @@ CREATE POLICY "Authenticated admins have full access" ON public.apps FOR ALL TO 
   };
 
   // ==========================================================================
-  // VIEW: IF NOT AUTHENTICATED -> SHOW ADMIN LOGIN SCREEN
+  // VIEW: IF NOT AUTHENTICATED -> SHOW OWNER LOGIN SCREEN
   // ==========================================================================
   if (!adminSession.isAuthenticated) {
     return (
@@ -410,55 +419,105 @@ CREATE POLICY "Authenticated admins have full access" ON public.apps FOR ALL TO 
           </div>
           <h1 className="text-2xl font-extrabold text-white tracking-tight">Owner Portal</h1>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Pusat kendali katalog terpusat Aladzan Corpora. Masuk untuk mendaftarkan aplikasi, mengubah harga, dan menerbitkan update.
+            Pusat kendali katalog terpusat Aladzan Corpora. Masuk menggunakan akun Supabase Auth resmi yang terdaftar di <code className="text-amber-300 font-mono">public.admin_users</code>.
           </p>
         </div>
 
         <form onSubmit={handleLogin} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-300">Email Owner / Admin</label>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-300">Email</label>
             <input
+              id="owner-email-input"
               type="email"
               value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
+              onChange={(e) => {
+                setLoginEmail(e.target.value);
+                if (loginError) setLoginError('');
+              }}
               placeholder="owner@aladzancorpora.com"
-              className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:border-amber-500 outline-none"
+              className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:border-amber-500 outline-none transition-colors"
               required
+              disabled={isSubmitting}
             />
           </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-300">Password / Passcode</label>
-              <span className="text-[10px] text-slate-500">Dev Passcode: alco2026</span>
-            </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-300">Password</label>
             <input
+              id="owner-password-input"
               type="password"
               value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
+              onChange={(e) => {
+                setLoginPassword(e.target.value);
+                if (loginError) setLoginError('');
+              }}
               placeholder="••••••••"
-              className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:border-amber-500 outline-none"
+              className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:border-amber-500 outline-none transition-colors"
               required
+              disabled={isSubmitting}
             />
           </div>
 
-          {loginError && (
-            <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
-              {loginError}
+          {/* Status Indicator: Signing in... */}
+          {authStatus === 'signing-in' && (
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5 animate-pulse">
+              <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-amber-400" />
+              <div>
+                <p className="font-semibold">Signing in...</p>
+                <p className="text-[11px] text-amber-300/80">Memvalidasi akun Supabase Auth dan tabel admin_users...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Status Indicator: Invalid Credentials */}
+          {authStatus === 'invalid-credentials' && loginError && (
+            <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400" />
+              <div>
+                <p className="font-bold">Invalid credentials</p>
+                <p className="text-[11px] text-rose-300/80">Email atau password yang Anda masukkan tidak sesuai.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Status Indicator: Access Denied */}
+          {authStatus === 'access-denied' && loginError && (
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5">
+              <ShieldX className="w-4 h-4 shrink-0 text-amber-400" />
+              <div>
+                <p className="font-bold">Access denied</p>
+                <p className="text-[11px] text-amber-300/80">Akun terdaftar di Supabase Auth, tetapi tidak memiliki role Owner di tabel public.admin_users.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Generic Error */}
+          {loginError && authStatus !== 'invalid-credentials' && authStatus !== 'access-denied' && (
+            <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400" />
+              <div className="text-[11px] leading-relaxed">{loginError}</div>
             </div>
           )}
 
           <button
+            id="owner-signin-submit-btn"
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow-md active:scale-[0.99] disabled:opacity-50"
+            className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow-md active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {isSubmitting ? 'Memverifikasi...' : 'Masuk ke Owner Portal'}
+            {isSubmitting ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Memverifikasi...</span>
+              </>
+            ) : (
+              <span>Sign In</span>
+            )}
           </button>
         </form>
 
         <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800/80 text-center text-[11px] text-slate-400">
-          <p>User biasa tidak dapat mengakses atau memodifikasi katalog aplikasi.</p>
+          <p>User publik hanya dapat melihat aplikasi yang berstatus <span className="text-emerald-400 font-semibold">Published</span>. Akses Admin terisolasi melalui Row Level Security (RLS).</p>
         </div>
       </div>
     );

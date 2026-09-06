@@ -135,10 +135,12 @@ export interface SyncMeta {
 
 export interface AdminAuthSession {
   isAuthenticated: boolean;
+  userId: string | null;
   email: string | null;
-  role: 'admin' | 'guest';
+  role: 'owner' | 'guest';
   token?: string | null;
-  mode: 'supabase-auth' | 'preview-admin' | 'none';
+  mode: 'supabase-auth' | 'none';
+  error?: string;
 }
 
 declare global {
