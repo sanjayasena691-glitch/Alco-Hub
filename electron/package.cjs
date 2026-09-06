@@ -5,12 +5,15 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const staging = path.join(root, '.electron-build');
 const output = path.join(root, 'dist-electron');
+const iconSource = path.join(root, 'Icon Alco Hub.ico');
+const iconStaging = path.join(staging, 'icon.ico');
 
 fs.rmSync(staging, { recursive: true, force: true });
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(staging, { recursive: true });
 fs.cpSync(path.join(root, 'dist'), path.join(staging, 'dist'), { recursive: true });
 fs.cpSync(path.join(root, 'electron'), path.join(staging, 'electron'), { recursive: true });
+fs.copyFileSync(iconSource, iconStaging);
 
 const isWin = process.platform === 'win32';
 const hasWine = !isWin && spawnSync('which', ['wine']).status === 0;
@@ -31,8 +34,10 @@ const packageJson = {
     electronVersion: '44.1.0',
     directories: { output: '../dist-electron' },
     files: ['dist/**/*', 'electron/**/*'],
+    extraResources: [{ from: 'icon.ico', to: 'icon.ico' }],
     asar: true,
-    win: { target: targets },
+    icon: 'icon.ico',
+    win: { target: targets, icon: 'icon.ico' },
     nsis: {
       oneClick: false,
       allowToChangeInstallationDirectory: true,

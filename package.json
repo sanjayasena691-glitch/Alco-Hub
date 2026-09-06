@@ -26,7 +26,15 @@
       "electron/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "Icon Alco Hub.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "icon": "Icon Alco Hub.ico",
     "win": {
+      "icon": "Icon Alco Hub.ico",
       "target": [
         {
           "target": "nsis",

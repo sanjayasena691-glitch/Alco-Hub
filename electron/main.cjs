@@ -399,8 +399,13 @@ function validateRegistryEntry(entry) {
 }
 
 function createWindow() {
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.resolve(__dirname, '..', 'Icon Alco Hub.png');
+
   const mainWindow = new BrowserWindow({
     title: 'ALCO Hub',
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     width: 1100,
     height: 800,
     minWidth: 800,
