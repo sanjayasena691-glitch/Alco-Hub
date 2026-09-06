@@ -24,6 +24,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldX,
+  UploadCloud,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -50,6 +51,7 @@ import {
   saveCustomSupabaseConfig,
   getSupabaseConfig,
 } from '../services/supabaseClient';
+import { ReleaseManager } from './ReleaseManager';
 import { ECOSYSTEM_PACKS } from '../config/ecosystemPacks';
 
 interface AdminViewProps {
@@ -74,7 +76,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   onAdminAuthChange,
 }) => {
   // Navigation & Subtabs
-  const [activeTab, setActiveTab] = useState<'apps' | 'licenses' | 'updates' | 'contact' | 'supabase'>('apps');
+  const [activeTab, setActiveTab] = useState<'apps' | 'releases' | 'licenses' | 'updates' | 'contact' | 'supabase'>('apps');
   const [isEditing, setIsEditing] = useState(false);
   const [editingAppId, setEditingAppId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -636,6 +638,16 @@ CREATE POLICY "Users can read own admin role" ON public.admin_users
         </button>
         <button
           type="button"
+          onClick={() => { setActiveTab('releases'); setIsEditing(false); }}
+          className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === 'releases' ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-xs' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
+          <span>Release Manager</span>
+        </button>
+        <button
+          type="button"
           onClick={() => { setActiveTab('licenses'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
             activeTab === 'licenses' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
@@ -650,7 +662,7 @@ CREATE POLICY "Users can read own admin role" ON public.admin_users
             activeTab === 'updates' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
           }`}
         >
-          Update & GitHub Publisher
+          Manual Metadata Updater
         </button>
         <button
           type="button"
@@ -671,6 +683,19 @@ CREATE POLICY "Users can read own admin role" ON public.admin_users
           Supabase & SQL
         </button>
       </div>
+
+      {/* TAB: RELEASE MANAGER */}
+      {activeTab === 'releases' && (
+        <ReleaseManager
+          apps={apps}
+          adminSession={adminSession}
+          onCatalogUpdated={onUpdateCatalog}
+          onNavigateToTab={(tab) => {
+            setActiveTab(tab);
+            setIsEditing(false);
+          }}
+        />
+      )}
 
       {/* TAB 1: APP REGISTRATION & MANAGEMENT */}
       {activeTab === 'apps' && (
@@ -1391,6 +1416,23 @@ CREATE POLICY "Owners update alco_contact" ON public.alco_contact
 CREATE POLICY "Users can read own admin role" ON public.admin_users 
     FOR SELECT TO authenticated USING (user_id = auth.uid());`}
             </pre>
+          </div>
+
+          {/* Edge Function Deployment Info */}
+          <div className="p-6 rounded-2xl bg-slate-900 border border-indigo-500/20 space-y-4">
+            <div className="flex items-center gap-2">
+              <UploadCloud className="w-5 h-5 text-indigo-400" />
+              <h3 className="text-sm font-bold text-white">Supabase Edge Function: <code className="text-indigo-300 font-mono">publish-release</code></h3>
+            </div>
+            <p className="text-xs text-slate-400">
+              Edge Function ini menangani pengunggahan installer <code className="text-slate-300">.exe</code> ke GitHub Releases secara aman menggunakan GitHub Personal Access Token yang disimpan di server secret.
+            </p>
+            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 space-y-2">
+              <p className="text-slate-500"># 1. Set GitHub Secret di Supabase CLI atau Dashboard:</p>
+              <p className="text-emerald-400">supabase secrets set GITHUB_TOKEN=ghp_yourToken GITHUB_REPO_OWNER=yaladzan92-creator GITHUB_REPO_NAME=Alco-Releases</p>
+              <p className="text-slate-500 pt-1"># 2. Deploy Edge Function:</p>
+              <p className="text-indigo-300">supabase functions deploy publish-release --no-verify-jwt</p>
+            </div>
           </div>
         </div>
       )}

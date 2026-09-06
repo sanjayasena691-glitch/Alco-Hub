@@ -143,6 +143,45 @@ export interface AdminAuthSession {
   error?: string;
 }
 
+export type ReleaseUploadStatus =
+  | 'idle'
+  | 'preparing'
+  | 'uploading'
+  | 'creating_release'
+  | 'updating_catalog'
+  | 'completed'
+  | 'failed';
+
+export interface ReleaseUploadProgress {
+  status: ReleaseUploadStatus;
+  progressPercent: number; // 0 - 100
+  bytesUploaded: number;
+  totalBytes: number;
+  currentStepMessage: string;
+  sha256?: string;
+  error?: string;
+  releaseData?: {
+    appId: string;
+    version: string;
+    tag: string;
+    releaseName: string;
+    downloadUrl: string;
+    sha256: string;
+    htmlUrl?: string;
+    fileName?: string;
+    published?: boolean;
+  };
+}
+
+export interface PublishReleasePayload {
+  appId: string;
+  appName: string;
+  version: string;
+  releaseNotes: string;
+  sha256: string;
+  file: File;
+}
+
 export type InstallStatus =
   | 'idle'
   | 'downloading'
