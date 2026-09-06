@@ -374,16 +374,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
   };
 
   const copySqlSchema = () => {
-    const sql = `-- Eksekusi di Supabase SQL Editor:
+    const sql = `-- ==============================================================================
+-- SKEMA RESMI DATABASE SUPABASE ALCO HUB (Aladzan Corpora)
+-- ==============================================================================
+
+-- 1. Tabel Aplikasi (apps)
 CREATE TABLE IF NOT EXISTS public.apps (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_id TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     short_name TEXT NOT NULL,
     description TEXT,
     function_label TEXT,
     pack_id TEXT DEFAULT 'core-system',
-    pricing_type TEXT NOT NULL DEFAULT 'licensed',
+    pricing_type TEXT NOT NULL DEFAULT 'licensed' CHECK (pricing_type IN ('free', 'licensed', 'coming-soon')),
     price_label TEXT,
     status TEXT DEFAULT 'installed',
     coming_soon BOOLEAN DEFAULT FALSE,
@@ -394,14 +398,50 @@ CREATE TABLE IF NOT EXISTS public.apps (
     sha256 TEXT,
     accent TEXT DEFAULT 'purple',
     icon_name TEXT DEFAULT 'target',
-    features JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 2. Tabel Kontak Resmi ALCO (alco_contact)
+CREATE TABLE IF NOT EXISTS public.alco_contact (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    whatsapp TEXT,
+    email TEXT,
+    default_purchase_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3. Tabel Admin Users (admin_users)
+CREATE TABLE IF NOT EXISTS public.admin_users (
+    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'owner'
+);
+
+-- 4. Enable Row Level Security (RLS)
 ALTER TABLE public.apps ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Public users can view published apps" ON public.apps FOR SELECT TO anon, authenticated USING (published = true);
-CREATE POLICY "Authenticated admins have full access" ON public.apps FOR ALL TO authenticated USING (true);`;
+ALTER TABLE public.alco_contact ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
+
+-- 5. Security Policies
+CREATE POLICY "Public users can view published apps" ON public.apps 
+    FOR SELECT TO anon, authenticated USING (published = true);
+
+CREATE POLICY "Owners have full access to apps" ON public.apps 
+    FOR ALL TO authenticated USING (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    );
+
+CREATE POLICY "Public read alco_contact" ON public.alco_contact 
+    FOR SELECT TO anon, authenticated USING (true);
+
+CREATE POLICY "Owners update alco_contact" ON public.alco_contact 
+    FOR ALL TO authenticated USING (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    );
+
+CREATE POLICY "Users can read own admin role" ON public.admin_users 
+    FOR SELECT TO authenticated USING (user_id = auth.uid());`;
     navigator.clipboard.writeText(sql);
     setCopiedSql(true);
     setTimeout(() => setCopiedSql(false), 2000);
@@ -1287,12 +1327,12 @@ CREATE POLICY "Authenticated admins have full access" ON public.apps FOR ALL TO 
               </button>
             </div>
             <p className="text-xs text-slate-400">
-              Eksekusi skrip ini di <strong>Supabase Dashboard &gt; SQL Editor</strong> untuk membuat tabel <code className="text-amber-300">apps</code> dan <code className="text-amber-300">alco_config</code> dengan policy RLS yang aman.
+              Eksekusi skrip ini di <strong>Supabase Dashboard &gt; SQL Editor</strong> untuk membuat tabel <code className="text-amber-300">apps</code>, <code className="text-amber-300">alco_contact</code>, dan <code className="text-amber-300">admin_users</code> dengan policy RLS yang aman.
             </p>
             <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-64">
-{`-- Skrip Schema Supabase ALCO Hub
+{`-- Skrip Schema Resmi Supabase ALCO Hub
 CREATE TABLE IF NOT EXISTS public.apps (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     app_id TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     short_name TEXT NOT NULL,
@@ -1310,14 +1350,46 @@ CREATE TABLE IF NOT EXISTS public.apps (
     sha256 TEXT,
     accent TEXT DEFAULT 'purple',
     icon_name TEXT DEFAULT 'target',
-    features JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS public.alco_contact (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    whatsapp TEXT,
+    email TEXT,
+    default_purchase_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.admin_users (
+    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'owner'
+);
+
 ALTER TABLE public.apps ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Public users can view published apps" ON public.apps FOR SELECT TO anon, authenticated USING (published = true);
-CREATE POLICY "Authenticated admins have full access" ON public.apps FOR ALL TO authenticated USING (true);`}
+ALTER TABLE public.alco_contact ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public users can view published apps" ON public.apps 
+    FOR SELECT TO anon, authenticated USING (published = true);
+
+CREATE POLICY "Owners have full access to apps" ON public.apps 
+    FOR ALL TO authenticated USING (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    );
+
+CREATE POLICY "Public read alco_contact" ON public.alco_contact 
+    FOR SELECT TO anon, authenticated USING (true);
+
+CREATE POLICY "Owners update alco_contact" ON public.alco_contact 
+    FOR ALL TO authenticated USING (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    );
+
+CREATE POLICY "Users can read own admin role" ON public.admin_users 
+    FOR SELECT TO authenticated USING (user_id = auth.uid());`}
             </pre>
           </div>
         </div>

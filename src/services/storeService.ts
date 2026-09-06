@@ -50,21 +50,11 @@ let isSyncInProgress = false;
 function mapDbRowToApp(row: any): EcosystemApp {
   const isComingSoon = Boolean(row.coming_soon ?? row.pricing_type === 'coming-soon');
   const pricingType = (row.pricing_type || (isComingSoon ? 'coming-soon' : 'licensed')) as PricingType;
-  
-  let features: string[] = [];
-  if (Array.isArray(row.features)) {
-    features = row.features;
-  } else if (typeof row.features === 'string') {
-    try {
-      features = JSON.parse(row.features);
-    } catch {
-      features = [row.features];
-    }
-  }
+  const appId = row.app_id || row.id;
 
   return {
-    id: row.id || row.app_id,
-    appId: row.app_id || row.id,
+    id: appId, // app_id sebagai identifier logis utama
+    appId: appId,
     name: row.name || 'ALCO Application',
     shortName: row.short_name || row.name || 'ALCO App',
     functionLabel: row.function_label || 'Specialized Business Tool',
@@ -85,25 +75,28 @@ function mapDbRowToApp(row: any): EcosystemApp {
     launchMode: isComingSoon ? 'disabled' : 'desktop',
     comingSoon: isComingSoon,
     status: (row.status || (isComingSoon ? 'coming-soon' : 'installed')) as AppStatus,
-    features,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
 function mapAppToDbRow(app: EcosystemApp): any {
+  const isComingSoon = Boolean(app.comingSoon ?? app.pricingType === 'coming-soon');
+  const appId = app.appId || app.id;
+
+  // JANGAN kirim id string ke kolom id UUID.
+  // Gunakan app_id sebagai unique business identifier untuk onConflict.
   return {
-    id: app.id,
-    app_id: app.appId || app.id,
+    app_id: appId,
     name: app.name,
-    short_name: app.shortName,
+    short_name: app.shortName || app.name,
     description: app.description || '',
     function_label: app.functionLabel || '',
     pack_id: app.packId || 'core-system',
     pricing_type: app.pricingType,
     price_label: app.priceLabel || '',
-    status: app.status || (app.pricingType === 'coming-soon' ? 'coming-soon' : 'installed'),
-    coming_soon: app.comingSoon ?? (app.pricingType === 'coming-soon'),
+    status: app.status || (isComingSoon ? 'coming-soon' : 'installed'),
+    coming_soon: isComingSoon,
     published: app.published !== false,
     latest_version: app.latestVersion || '1.0.0',
     release_notes: app.releaseNotes || '',
@@ -111,7 +104,6 @@ function mapAppToDbRow(app: EcosystemApp): any {
     sha256: app.sha256 || null,
     accent: app.accent || 'purple',
     icon_name: app.iconName || 'target',
-    features: app.features || [],
     updated_at: new Date().toISOString(),
   };
 }
@@ -246,7 +238,7 @@ export async function syncCatalogWithSupabase(
     // 3. Query tabel apps
     let query = client.from('apps').select('*').order('name', { ascending: true });
 
-    // Jika bukan admin, hanya ambil app yang sudah dipublish
+    // Jika bukan admin (public user), hanya ambil app yang sudah dipublish
     if (!isAdmin) {
       query = query.eq('published', true);
     }
@@ -258,41 +250,23 @@ export async function syncCatalogWithSupabase(
       throw new Error(appsError.message);
     }
 
-    // 4. Query tabel kontak ALCO (public.alco_contact)
+    // 4. Query tabel kontak ALCO resmi (public.alco_contact)
     try {
       const { data: contactData, error: contactError } = await client
         .from('alco_contact')
-        .select('*')
+        .select('id, whatsapp, email, default_purchase_message')
         .limit(1)
         .maybeSingle();
 
       if (contactData && !contactError) {
         const updatedContact: ContactAlcoConfig = {
-          whatsappNumber: contactData.whatsapp || contactData.whatsapp_number || DEFAULT_CONTACT_CONFIG.whatsappNumber,
-          supportEmail: contactData.email || contactData.support_email || DEFAULT_CONTACT_CONFIG.supportEmail,
-          companyName: contactData.company_name || DEFAULT_CONTACT_CONFIG.companyName,
+          whatsappNumber: contactData.whatsapp || DEFAULT_CONTACT_CONFIG.whatsappNumber,
+          supportEmail: contactData.email || DEFAULT_CONTACT_CONFIG.supportEmail,
+          companyName: DEFAULT_CONTACT_CONFIG.companyName,
           ownerName: DEFAULT_CONTACT_CONFIG.ownerName,
           defaultPurchaseMessage: contactData.default_purchase_message || DEFAULT_CONTACT_CONFIG.defaultPurchaseMessage,
         };
         saveContactConfigLocal(updatedContact);
-      } else {
-        // Fallback to alco_config if alco_contact is not yet created
-        const { data: fallbackContact } = await client
-          .from('alco_config')
-          .select('*')
-          .eq('id', 'contact')
-          .maybeSingle();
-
-        if (fallbackContact) {
-          const updatedContact: ContactAlcoConfig = {
-            whatsappNumber: fallbackContact.whatsapp || DEFAULT_CONTACT_CONFIG.whatsappNumber,
-            supportEmail: fallbackContact.email || DEFAULT_CONTACT_CONFIG.supportEmail,
-            companyName: fallbackContact.company_name || DEFAULT_CONTACT_CONFIG.companyName,
-            ownerName: DEFAULT_CONTACT_CONFIG.ownerName,
-            defaultPurchaseMessage: fallbackContact.default_purchase_message,
-          };
-          saveContactConfigLocal(updatedContact);
-        }
       }
     } catch (contactErr) {
       console.warn('[ALCO Hub] Error querying alco_contact:', contactErr);
@@ -303,8 +277,13 @@ export async function syncCatalogWithSupabase(
     if (dbApps && dbApps.length > 0) {
       newAppsList = dbApps.map(mapDbRowToApp);
     } else {
-      // Jika tabel di Supabase kosong, gunakan default apps
-      newAppsList = DEFAULT_APPS;
+      if (isAdmin) {
+        // Owner melihat local default apps untuk kemudahan inisialisasi / migrasi ke cloud
+        newAppsList = DEFAULT_APPS;
+      } else {
+        // Public user: jika tabel Supabase kosong / belum ada app published, tampilkan kosong
+        newAppsList = [];
+      }
     }
 
     saveCatalogToCache(newAppsList);
@@ -341,7 +320,8 @@ export async function syncCatalogWithSupabase(
 
 /**
  * Menyimpan / Menerbitkan aplikasi ke Supabase (public.apps)
- * Jika offline atau koneksi gagal, TIDAK pura-pura tersimpan ke server.
+ * Menggunakan app_id sebagai identifier unik pada onConflict.
+ * Jika offline atau koneksi gagal, TIDAK menyimpan ke cache seolah-olah sukses.
  */
 export async function saveAppToCloud(
   app: EcosystemApp,
@@ -359,7 +339,7 @@ export async function saveAppToCloud(
 
   try {
     const dbRow = mapAppToDbRow(app);
-    const { error } = await client.from('apps').upsert(dbRow, { onConflict: 'id' });
+    const { error } = await client.from('apps').upsert(dbRow, { onConflict: 'app_id' });
 
     if (error) {
       console.warn('[ALCO Hub] Failed to save app to Supabase:', error);
@@ -370,18 +350,19 @@ export async function saveAppToCloud(
       };
     }
 
-    // Update local cache setelah berhasil di Supabase
+    // Update local cache HANYA setelah berhasil di Supabase
     const cached = getCachedApps();
     let updatedList: EcosystemApp[];
+    const targetId = app.appId || app.id;
     if (isNew) {
-      const existingIndex = cached.findIndex((a) => a.id === app.id);
+      const existingIndex = cached.findIndex((a) => (a.appId || a.id) === targetId);
       if (existingIndex >= 0) {
-        updatedList = cached.map((a) => (a.id === app.id ? app : a));
+        updatedList = cached.map((a) => ((a.appId || a.id) === targetId ? app : a));
       } else {
         updatedList = [...cached, app];
       }
     } else {
-      updatedList = cached.map((a) => (a.id === app.id ? app : a));
+      updatedList = cached.map((a) => ((a.appId || a.id) === targetId ? app : a));
     }
     saveCatalogToCache(updatedList);
 
@@ -400,7 +381,7 @@ export async function saveAppToCloud(
 }
 
 /**
- * Menghapus aplikasi dari Supabase (public.apps) & Cache
+ * Menghapus aplikasi dari Supabase (public.apps) & Cache berdasarkan app_id
  */
 export async function deleteAppFromCloud(appId: string): Promise<{ success: boolean; message: string }> {
   const client = getSupabase();
@@ -413,7 +394,7 @@ export async function deleteAppFromCloud(appId: string): Promise<{ success: bool
   }
 
   try {
-    const { error } = await client.from('apps').delete().eq('id', appId);
+    const { error } = await client.from('apps').delete().eq('app_id', appId);
     if (error) {
       return {
         success: false,
@@ -421,8 +402,9 @@ export async function deleteAppFromCloud(appId: string): Promise<{ success: bool
       };
     }
 
+    // Update local cache HANYA setelah berhasil di Supabase
     const cached = getCachedApps();
-    const updatedList = cached.filter((a) => a.id !== appId);
+    const updatedList = cached.filter((a) => (a.appId || a.id) !== appId);
     saveCatalogToCache(updatedList);
 
     return { success: true, message: 'Aplikasi berhasil dihapus dari katalog Supabase.' };
@@ -435,7 +417,7 @@ export async function deleteAppFromCloud(appId: string): Promise<{ success: bool
 }
 
 /**
- * Mengubah status publish/unpublish aplikasi di Supabase (public.apps) & Cache
+ * Mengubah status publish/unpublish aplikasi di Supabase (public.apps) & Cache berdasarkan app_id
  */
 export async function togglePublishAppInCloud(
   appId: string,
@@ -454,7 +436,7 @@ export async function togglePublishAppInCloud(
     const { error } = await client
       .from('apps')
       .update({ published, updated_at: new Date().toISOString() })
-      .eq('id', appId);
+      .eq('app_id', appId);
 
     if (error) {
       return {
@@ -463,8 +445,9 @@ export async function togglePublishAppInCloud(
       };
     }
 
+    // Update local cache HANYA setelah berhasil di Supabase
     const cached = getCachedApps();
-    const updatedList = cached.map((a) => (a.id === appId ? { ...a, published } : a));
+    const updatedList = cached.map((a) => ((a.appId || a.id) === appId ? { ...a, published } : a));
     saveCatalogToCache(updatedList);
 
     return {
@@ -483,6 +466,7 @@ export async function togglePublishAppInCloud(
 
 /**
  * Menyimpan konfigurasi kontak resmi ALCO ke Supabase (public.alco_contact)
+ * Menggunakan skema: id (UUID), whatsapp, email, default_purchase_message, updated_at.
  */
 export async function saveContactConfig(
   config: ContactAlcoConfig
@@ -490,41 +474,59 @@ export async function saveContactConfig(
   const client = getSupabase();
 
   if (!client || !isSupabaseConfigured()) {
-    saveContactConfigLocal(config);
     return {
       success: false,
-      message: 'Koneksi Supabase belum aktif. Kontak hanya tersimpan secara lokal sementara.',
+      message: 'Koneksi Supabase belum aktif. Kontak tidak dapat disimpan ke cloud server.',
     };
   }
 
   try {
-    // 1. Coba simpan ke tabel public.alco_contact
-    const { error: contactError } = await client.from('alco_contact').upsert({
-      id: 'contact',
-      whatsapp: config.whatsappNumber,
-      email: config.supportEmail,
-      company_name: config.companyName,
-      default_purchase_message: config.defaultPurchaseMessage,
-      updated_at: new Date().toISOString(),
-    });
+    // 1. Cek apakah baris kontak sudah ada di public.alco_contact
+    const { data: existing, error: fetchErr } = await client
+      .from('alco_contact')
+      .select('id')
+      .limit(1)
+      .maybeSingle();
 
-    if (contactError) {
-      // Fallback ke tabel alco_config jika alco_contact belum dibuat
-      const { error: fallbackError } = await client.from('alco_config').upsert({
-        id: 'contact',
-        whatsapp: config.whatsappNumber,
-        email: config.supportEmail,
-        company_name: config.companyName,
-        default_purchase_message: config.defaultPurchaseMessage,
-        updated_at: new Date().toISOString(),
-      });
+    if (fetchErr) {
+      return {
+        success: false,
+        message: `Gagal membaca tabel alco_contact: ${fetchErr.message}`,
+      };
+    }
 
-      if (fallbackError) {
-        return {
-          success: false,
-          message: `Gagal menyimpan kontak ke Supabase: ${contactError.message}`,
-        };
-      }
+    let writeError = null;
+
+    if (existing?.id) {
+      // 2a. Update row existing berdasarkan UUID row
+      const { error: updateErr } = await client
+        .from('alco_contact')
+        .update({
+          whatsapp: config.whatsappNumber,
+          email: config.supportEmail,
+          default_purchase_message: config.defaultPurchaseMessage,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+      writeError = updateErr;
+    } else {
+      // 2b. Insert row baru tanpa mengirim id (Supabase men-generate UUID)
+      const { error: insertErr } = await client
+        .from('alco_contact')
+        .insert({
+          whatsapp: config.whatsappNumber,
+          email: config.supportEmail,
+          default_purchase_message: config.defaultPurchaseMessage,
+          updated_at: new Date().toISOString(),
+        });
+      writeError = insertErr;
+    }
+
+    if (writeError) {
+      return {
+        success: false,
+        message: `Gagal menyimpan ke public.alco_contact: ${writeError.message}`,
+      };
     }
 
     saveContactConfigLocal(config);
@@ -532,7 +534,7 @@ export async function saveContactConfig(
   } catch (err: any) {
     return {
       success: false,
-      message: `Gagal menyimpan kontak (Offline): ${err.message}`,
+      message: `Gagal menyimpan kontak (Koneksi terputus): ${err.message || 'Network error'}`,
     };
   }
 }
