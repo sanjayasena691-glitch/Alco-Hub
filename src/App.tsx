@@ -15,6 +15,8 @@ import {
   ContactAlcoConfig,
   SyncMeta,
   AdminAuthSession,
+  AppLocalInstallation,
+  AppInstallProgress,
 } from './types';
 import { HUB_META } from './config/ecosystemApps';
 import { ECOSYSTEM_PACKS } from './config/ecosystemPacks';
@@ -30,6 +32,13 @@ import {
   getContactConfig,
   isAppLicensed,
 } from './services/storeService';
+import {
+  checkAllAppsInstallation,
+  checkAppInstallation,
+  startAppInstallation,
+  subscribeToInstallProgress,
+  launchDesktopApp,
+} from './services/installerService';
 import { getSupabase } from './services/supabaseClient';
 
 import { HeaderNav } from './components/HeaderNav';
@@ -56,6 +65,10 @@ export default function App() {
   const [adminSession, setAdminSession] = useState<AdminAuthSession>(getAdminSession());
   const [selectedAppForLicense, setSelectedAppForLicense] = useState<EcosystemApp | null>(null);
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
+
+  // Desktop Local Installations & Progress State
+  const [localInstallations, setLocalInstallations] = useState<Record<string, AppLocalInstallation>>({});
+  const [installProgressMap, setInstallProgressMap] = useState<Record<string, AppInstallProgress>>({});
 
   // Update Checker States
   const [contentEngineUpdate, setContentEngineUpdate] = useState<ContentEngineUpdateResult | null>(null);
@@ -85,6 +98,36 @@ export default function App() {
     };
 
     initAuthAndCatalog();
+
+    // Check installed desktop applications from Electron
+    const refreshInstallations = async () => {
+      const installed = await checkAllAppsInstallation();
+      setLocalInstallations(installed);
+    };
+    refreshInstallations();
+
+    // Subscribe to real-time installer progress pushed from Electron main process
+    const unsubscribeProgress = subscribeToInstallProgress((progress) => {
+      setInstallProgressMap((prev) => ({
+        ...prev,
+        [progress.appId]: progress,
+      }));
+
+      // If installer executed or ready, trigger a background poll to detect newly installed executable
+      if (progress.status === 'ready-to-install') {
+        const interval = setInterval(async () => {
+          const info = await checkAppInstallation(progress.appId);
+          if (info.isInstalled) {
+            setLocalInstallations((prev) => ({
+              ...prev,
+              [progress.appId]: info,
+            }));
+            clearInterval(interval);
+          }
+        }, 4000);
+        setTimeout(() => clearInterval(interval), 180000);
+      }
+    });
 
     // Listen to Supabase Auth changes (signOut / token refresh)
     const client = getSupabase();
@@ -117,6 +160,7 @@ export default function App() {
 
     return () => {
       authSub?.unsubscribe?.();
+      unsubscribeProgress();
     };
   }, []);
 
@@ -132,6 +176,10 @@ export default function App() {
     });
     setApps(res.apps);
     setSyncMeta(res.syncMeta);
+
+    // Refresh installation states
+    const installed = await checkAllAppsInstallation();
+    setLocalInstallations(installed);
   };
 
   const checkUpdates = () => {
@@ -152,6 +200,40 @@ export default function App() {
       });
   };
 
+  const handleInstallApp = async (app: EcosystemApp) => {
+    const appId = app.appId || app.id;
+    setInstallProgressMap((prev) => ({
+      ...prev,
+      [appId]: {
+        appId,
+        status: 'downloading',
+        progress: 0,
+        bytesReceived: 0,
+        totalBytes: 0,
+      },
+    }));
+
+    const result = await startAppInstallation(app, (prog) => {
+      setInstallProgressMap((prev) => ({
+        ...prev,
+        [appId]: prog,
+      }));
+    });
+
+    if (result.success) {
+      // Recheck installation after installer execution
+      setTimeout(async () => {
+        const info = await checkAppInstallation(appId);
+        if (info.isInstalled) {
+          setLocalInstallations((prev) => ({
+            ...prev,
+            [appId]: info,
+          }));
+        }
+      }, 5000);
+    }
+  };
+
   const handleOpenApp = (app: EcosystemApp) => {
     if (app.comingSoon || app.pricingType === 'coming-soon' || app.status === 'coming-soon') {
       return;
@@ -165,24 +247,21 @@ export default function App() {
       return;
     }
 
-    if (app.launchMode === 'desktop') {
-      if (!window.alcoHub?.openDesktopApp) {
-        window.alert(
-          `${app.name} desktop memerlukan runtime ALCO Hub Electron di Windows.\n\nJika Anda sedang berada di Preview Google AI Studio, jalankan aplikasi melalui build desktop ALCO Hub.exe.`
-        );
-        return;
-      }
+    const canonicalId = app.appId || app.id;
+    const isLocalInstalled = localInstallations[canonicalId]?.isInstalled || localInstallations[app.id]?.isInstalled;
 
-      window.alcoHub
-        .openDesktopApp(app.id)
-        .then((result) => {
-          if (!result.success) {
+    if (app.launchMode === 'desktop' || isLocalInstalled) {
+      launchDesktopApp(canonicalId).then((result) => {
+        if (!result.success) {
+          if (!window.alcoHub?.openDesktopApp) {
+            window.alert(
+              `${app.name} desktop memerlukan runtime ALCO Hub Electron di Windows.\n\nJika Anda sedang berada di Preview Google AI Studio, jalankan aplikasi melalui build desktop ALCO Hub.exe.`
+            );
+          } else {
             window.alert(result.error || `${app.name} tidak dapat dibuka.`);
           }
-        })
-        .catch(() => {
-          window.alert(`${app.name} tidak dapat dibuka.`);
-        });
+        }
+      });
       return;
     }
 
@@ -205,6 +284,12 @@ export default function App() {
   };
 
   const handlePerformUpdate = (app: EcosystemApp) => {
+    // If installer download exists, trigger installer flow
+    if (app.downloadUrl && app.sha256) {
+      handleInstallApp(app);
+      return;
+    }
+
     // Update local app version in catalog while preserving licenses!
     const updatedApps = apps.map((a) => {
       if (a.id === app.id) {
@@ -248,8 +333,11 @@ export default function App() {
             packs={ECOSYSTEM_PACKS}
             allApps={apps}
             userLicenses={userLicenses}
+            localInstallations={localInstallations}
+            installProgressMap={installProgressMap}
             recentApp={recentApp}
             onOpenApp={handleOpenApp}
+            onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
             onRequestLicense={handleRequestLicense}
             onExplorePack={() => setActiveTab('packs')}
@@ -266,8 +354,11 @@ export default function App() {
             apps={apps}
             packs={ECOSYSTEM_PACKS}
             userLicenses={userLicenses}
+            localInstallations={localInstallations}
+            installProgressMap={installProgressMap}
             syncMeta={syncMeta}
             onOpenApp={handleOpenApp}
+            onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
             onRequestLicense={handleRequestLicense}
             onSyncCatalog={() => handleCatalogSync(true)}
@@ -280,7 +371,10 @@ export default function App() {
           <LibraryView
             apps={apps}
             userLicenses={userLicenses}
+            localInstallations={localInstallations}
+            installProgressMap={installProgressMap}
             onOpenApp={handleOpenApp}
+            onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
             onRequestLicense={handleRequestLicense}
             onGoToStore={() => setActiveTab('store')}
@@ -294,7 +388,10 @@ export default function App() {
             packs={ECOSYSTEM_PACKS}
             apps={apps}
             userLicenses={userLicenses}
+            localInstallations={localInstallations}
+            installProgressMap={installProgressMap}
             onOpenApp={handleOpenApp}
+            onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
             onRequestLicense={handleRequestLicense}
             updateResult={contentEngineUpdate}
@@ -306,10 +403,13 @@ export default function App() {
           <UpdatesView
             apps={apps}
             userLicenses={userLicenses}
+            localInstallations={localInstallations}
+            installProgressMap={installProgressMap}
             updateResult={contentEngineUpdate}
             updateStatus={contentEngineUpdateStatus}
             onCheckUpdate={checkUpdates}
             onPerformUpdate={handlePerformUpdate}
+            onInstallApp={handleInstallApp}
           />
         )}
 

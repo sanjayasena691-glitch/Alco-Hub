@@ -16,6 +16,8 @@ import {
   UserLicense,
   ContentEngineUpdateResult,
   ContentEngineUpdateStatus,
+  AppLocalInstallation,
+  AppInstallProgress,
 } from '../types';
 import { isAppLicensed } from '../services/storeService';
 import { ApplicationCard } from './ApplicationCard';
@@ -23,7 +25,10 @@ import { ApplicationCard } from './ApplicationCard';
 interface LibraryViewProps {
   apps: EcosystemApp[];
   userLicenses: Record<string, UserLicense>;
+  localInstallations?: Record<string, AppLocalInstallation>;
+  installProgressMap?: Record<string, AppInstallProgress>;
   onOpenApp: (app: EcosystemApp) => void;
+  onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
   onRequestLicense: (app: EcosystemApp) => void;
   onGoToStore: () => void;
@@ -34,7 +39,10 @@ interface LibraryViewProps {
 export const LibraryView: React.FC<LibraryViewProps> = ({
   apps,
   userLicenses,
+  localInstallations = {},
+  installProgressMap = {},
   onOpenApp,
+  onInstallApp,
   onUpdateApp,
   onRequestLicense,
   onGoToStore,
@@ -73,18 +81,24 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           </div>
 
           <div id="library-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {ownedApps.map((app) => (
-              <ApplicationCard
-                key={app.id}
-                app={app}
-                userLicenses={userLicenses}
-                onOpenApp={onOpenApp}
-                onUpdateApp={onUpdateApp}
-                onRequestLicense={onRequestLicense}
-                updateResult={updateResult}
-                updateStatus={updateStatus}
-              />
-            ))}
+            {ownedApps.map((app) => {
+              const canonicalId = app.appId || app.id;
+              return (
+                <ApplicationCard
+                  key={app.id}
+                  app={app}
+                  userLicenses={userLicenses}
+                  installation={localInstallations[canonicalId] || localInstallations[app.id]}
+                  installProgress={installProgressMap[canonicalId] || installProgressMap[app.id]}
+                  onOpenApp={onOpenApp}
+                  onInstallApp={onInstallApp}
+                  onUpdateApp={onUpdateApp}
+                  onRequestLicense={onRequestLicense}
+                  updateResult={updateResult}
+                  updateStatus={updateStatus}
+                />
+              );
+            })}
           </div>
         </div>
       ) : (

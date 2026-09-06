@@ -22,6 +22,8 @@ import {
   ContentEngineUpdateStatus,
   UserLicense,
   SyncMeta,
+  AppLocalInstallation,
+  AppInstallProgress,
 } from '../types';
 import { ApplicationCard } from './ApplicationCard';
 import { isAppLicensed } from '../services/storeService';
@@ -30,8 +32,11 @@ interface AppsViewProps {
   apps: EcosystemApp[];
   packs: EcosystemPack[];
   userLicenses: Record<string, UserLicense>;
+  localInstallations?: Record<string, AppLocalInstallation>;
+  installProgressMap?: Record<string, AppInstallProgress>;
   syncMeta: SyncMeta;
   onOpenApp: (app: EcosystemApp) => void;
+  onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
   onRequestLicense: (app: EcosystemApp) => void;
   onSyncCatalog: () => void;
@@ -43,8 +48,11 @@ export const AppsView: React.FC<AppsViewProps> = ({
   apps,
   packs,
   userLicenses,
+  localInstallations = {},
+  installProgressMap = {},
   syncMeta,
   onOpenApp,
+  onInstallApp,
   onUpdateApp,
   onRequestLicense,
   onSyncCatalog,
@@ -78,13 +86,17 @@ export const AppsView: React.FC<AppsViewProps> = ({
         if (app.pricingType !== 'licensed') return false;
       } else if (selectedPricingFilter === 'owned') {
         if (!isAppLicensed(app, userLicenses)) return false;
+      } else if (selectedPricingFilter === 'installed') {
+        const canonicalId = app.appId || app.id;
+        const inst = localInstallations[canonicalId] || localInstallations[app.id];
+        if (!inst?.isInstalled) return false;
       } else if (selectedPricingFilter === 'coming-soon') {
         if (app.pricingType !== 'coming-soon' && !app.comingSoon) return false;
       }
 
       return true;
     });
-  }, [apps, searchQuery, selectedPackFilter, selectedPricingFilter, userLicenses]);
+  }, [apps, searchQuery, selectedPackFilter, selectedPricingFilter, userLicenses, localInstallations]);
 
   return (
     <div id="alco-apps-view" className="space-y-8">
@@ -173,6 +185,7 @@ export const AppsView: React.FC<AppsViewProps> = ({
             className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
           >
             <option value="all">Semua Tipe Lisensi</option>
+            <option value="installed">Terpasang di Komputer (Installed)</option>
             <option value="owned">Aplikasi yang Saya Miliki</option>
             <option value="licensed">Berlisensi Resmi</option>
             <option value="free">Gratis (Free Tools)</option>
@@ -184,18 +197,24 @@ export const AppsView: React.FC<AppsViewProps> = ({
       {/* Grid of Apps */}
       {filteredApps.length > 0 ? (
         <div id="product-library-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredApps.map((app) => (
-            <ApplicationCard
-              key={app.id}
-              app={app}
-              userLicenses={userLicenses}
-              onOpenApp={onOpenApp}
-              onUpdateApp={onUpdateApp}
-              onRequestLicense={onRequestLicense}
-              updateResult={updateResult}
-              updateStatus={updateStatus}
-            />
-          ))}
+          {filteredApps.map((app) => {
+            const canonicalId = app.appId || app.id;
+            return (
+              <ApplicationCard
+                key={app.id}
+                app={app}
+                userLicenses={userLicenses}
+                installation={localInstallations[canonicalId] || localInstallations[app.id]}
+                installProgress={installProgressMap[canonicalId] || installProgressMap[app.id]}
+                onOpenApp={onOpenApp}
+                onInstallApp={onInstallApp}
+                onUpdateApp={onUpdateApp}
+                onRequestLicense={onRequestLicense}
+                updateResult={updateResult}
+                updateStatus={updateStatus}
+              />
+            );
+          })}
         </div>
       ) : (
         <div className="text-center py-16 bg-slate-900/40 rounded-xl border border-slate-800/80 p-8 space-y-3">

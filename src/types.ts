@@ -143,11 +143,55 @@ export interface AdminAuthSession {
   error?: string;
 }
 
+export type InstallStatus =
+  | 'idle'
+  | 'downloading'
+  | 'verifying'
+  | 'ready-to-install'
+  | 'installing'
+  | 'installed'
+  | 'failed';
+
+export interface AppInstallProgress {
+  appId: string;
+  status: InstallStatus;
+  progress: number; // 0 - 100
+  bytesReceived: number;
+  totalBytes: number;
+  message?: string;
+  error?: string;
+}
+
+export interface AppLocalInstallation {
+  isInstalled: boolean;
+  version: string | null;
+  executablePath: string | null;
+}
+
+export interface InstallResult {
+  success: boolean;
+  installed?: boolean;
+  version?: string | null;
+  executablePath?: string | null;
+  message?: string;
+  error?: string;
+}
+
 declare global {
   interface Window {
     alcoHub?: {
       openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
       openDesktopApp: (appId: string) => Promise<{ success: boolean; error?: string }>;
+      checkAppInstalled: (appId: string) => Promise<AppLocalInstallation>;
+      checkAllAppsInstalled: () => Promise<Record<string, AppLocalInstallation>>;
+      downloadAndInstallApp: (params: {
+        appId: string;
+        downloadUrl: string;
+        sha256: string;
+        latestVersion: string;
+        appName?: string;
+      }) => Promise<InstallResult>;
+      onInstallProgress: (callback: (data: AppInstallProgress) => void) => () => void;
       checkContentEngineUpdate?: () => Promise<ContentEngineUpdateResult>;
     };
   }

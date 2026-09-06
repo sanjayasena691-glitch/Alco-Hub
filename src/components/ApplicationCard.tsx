@@ -24,6 +24,8 @@ import {
   ShieldCheck,
   Lock,
   Download,
+  RefreshCw,
+  FileCheck2,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -31,13 +33,18 @@ import {
   ProductIconName,
   ContentEngineUpdateResult,
   UserLicense,
+  AppLocalInstallation,
+  AppInstallProgress,
 } from '../types';
 import { isAppLicensed } from '../services/storeService';
 
 interface ApplicationCardProps {
   app: EcosystemApp;
   userLicenses?: Record<string, UserLicense>;
+  installation?: AppLocalInstallation;
+  installProgress?: AppInstallProgress;
   onOpenApp: (app: EcosystemApp) => void;
+  onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp?: (app: EcosystemApp) => void;
   onRequestLicense?: (app: EcosystemApp) => void;
   updateResult?: ContentEngineUpdateResult | null;
@@ -153,7 +160,10 @@ const ACCENT_STYLES: Record<
 export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   app,
   userLicenses = {},
+  installation,
+  installProgress,
   onOpenApp,
+  onInstallApp,
   onUpdateApp,
   onRequestLicense,
   updateResult,
@@ -164,11 +174,19 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   const isComingSoon = app.pricingType === 'coming-soon' || app.comingSoon;
   const isFree = app.pricingType === 'free';
   const isLicensed = isAppLicensed(app, userLicenses);
+  const isInstalled = Boolean(installation?.isInstalled);
+
+  const isDownloading = installProgress?.status === 'downloading';
+  const isVerifying = installProgress?.status === 'verifying';
+  const isInstalling = installProgress?.status === 'installing' || installProgress?.status === 'ready-to-install';
+  const isFailed = installProgress?.status === 'failed';
+  const isBusy = isDownloading || isVerifying || isInstalling;
 
   // Update calculation
   const hasUpdate =
-    (app.latestVersion && app.version && app.latestVersion !== app.version) ||
-    (app.id === 'content-engine' && updateStatus === 'update-available');
+    isInstalled &&
+    ((app.latestVersion && installation?.version && app.latestVersion !== installation.version) ||
+      (app.id === 'content-engine' && updateStatus === 'update-available'));
 
   const renderIcon = (name: ProductIconName) => {
     switch (name) {
@@ -249,6 +267,46 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 <Clock className="w-3 h-3 text-slate-500 shrink-0" aria-hidden="true" />
                 <span>Coming Soon</span>
               </span>
+            ) : isDownloading ? (
+              <span
+                id={`app-status-badge-downloading-${app.id}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 animate-pulse"
+              >
+                <RefreshCw className="w-3 h-3 text-cyan-400 animate-spin shrink-0" />
+                <span>Downloading {installProgress?.progress || 0}%</span>
+              </span>
+            ) : isVerifying ? (
+              <span
+                id={`app-status-badge-verifying-${app.id}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30 animate-pulse"
+              >
+                <FileCheck2 className="w-3 h-3 text-purple-400 shrink-0" />
+                <span>Verifying SHA-256</span>
+              </span>
+            ) : isInstalling ? (
+              <span
+                id={`app-status-badge-installing-${app.id}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30"
+              >
+                <RefreshCw className="w-3 h-3 text-amber-400 animate-spin shrink-0" />
+                <span>Installing...</span>
+              </span>
+            ) : isFailed ? (
+              <span
+                id={`app-status-badge-failed-${app.id}`}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-500/15 text-rose-300 border border-rose-500/30"
+              >
+                <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                <span>Failed</span>
+              </span>
+            ) : isInstalled ? (
+              <span
+                id={`app-status-badge-${app.id}`}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" aria-hidden="true" />
+                <span>Installed {installation?.version ? `v${installation.version}` : ''}</span>
+              </span>
             ) : isFree ? (
               <span
                 id={`app-status-badge-${app.id}`}
@@ -308,8 +366,68 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
           {app.description}
         </p>
 
+        {/* Download & Verification Live Progress Box */}
+        {isDownloading && (
+          <div className="p-3 rounded-lg bg-cyan-950/40 border border-cyan-500/30 space-y-2">
+            <div className="flex items-center justify-between text-xs text-cyan-200">
+              <span className="font-semibold flex items-center gap-1.5">
+                <Download className="w-3.5 h-3.5 text-cyan-400 animate-bounce" />
+                <span>Mengunduh Installer...</span>
+              </span>
+              <span className="font-mono font-bold">{installProgress?.progress || 0}%</span>
+            </div>
+            {/* Progress Bar Track */}
+            <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-700">
+              <div
+                className="bg-cyan-400 h-full rounded-full transition-all duration-150 shadow-sm shadow-cyan-400/50"
+                style={{ width: `${installProgress?.progress || 0}%` }}
+              />
+            </div>
+            {installProgress?.totalBytes ? (
+              <div className="text-[10px] text-slate-400 font-mono flex justify-between">
+                <span>{((installProgress.bytesReceived || 0) / (1024 * 1024)).toFixed(1)} MB</span>
+                <span>{((installProgress.totalBytes || 0) / (1024 * 1024)).toFixed(1)} MB</span>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {isVerifying && (
+          <div className="p-3 rounded-lg bg-purple-950/40 border border-purple-500/30 space-y-1 text-xs text-purple-200 flex items-center gap-2.5">
+            <RefreshCw className="w-4 h-4 text-purple-400 animate-spin shrink-0" />
+            <div>
+              <p className="font-bold text-white">Memverifikasi Checksum SHA-256...</p>
+              <p className="text-[11px] text-purple-300">Menjamin integritas dan keaslian binary dari GitHub.</p>
+            </div>
+          </div>
+        )}
+
+        {isInstalling && (
+          <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-500/30 space-y-1 text-xs text-amber-200 flex items-center gap-2.5">
+            <Sparkles className="w-4 h-4 text-amber-400 animate-pulse shrink-0" />
+            <div>
+              <p className="font-bold text-white">Menjalankan Setup Installer...</p>
+              <p className="text-[11px] text-amber-300">Selesaikan wizard instalasi di Windows. ALCO Hub akan mendeteksi otomatis.</p>
+            </div>
+          </div>
+        )}
+
+        {isFailed && (
+          <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-500/30 space-y-1 text-xs text-rose-200">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-rose-100">Gagal Memasang Installer</p>
+                <p className="text-[11px] text-rose-300/90 leading-relaxed mt-0.5">
+                  {installProgress?.error || 'Verifikasi SHA-256 gagal atau koneksi terputus.'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Update Notification Box */}
-        {hasUpdate && (
+        {hasUpdate && !isBusy && (
           <div
             id={`update-notification-box-${app.id}`}
             className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 flex items-center justify-between gap-2"
@@ -319,7 +437,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 Versi Baru v{app.latestVersion}
               </span>
               <span className="text-[11px] text-slate-300">
-                Terpasang: v{app.version}
+                Terpasang: v{installation?.version || app.version}
               </span>
             </div>
             {onUpdateApp && (
@@ -348,7 +466,33 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
           >
             <span>Coming Soon</span>
           </button>
-        ) : isLicensed || isFree ? (
+        ) : isBusy ? (
+          <button
+            id={`app-btn-busy-${app.id}`}
+            type="button"
+            disabled
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 text-slate-400 text-xs font-bold cursor-wait border border-slate-700/80"
+          >
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+            <span>
+              {isDownloading
+                ? `Mengunduh (${installProgress?.progress || 0}%)...`
+                : isVerifying
+                  ? 'Memverifikasi SHA-256...'
+                  : 'Menjalankan Installer...'}
+            </span>
+          </button>
+        ) : isFailed ? (
+          <button
+            id={`app-btn-retry-${app.id}`}
+            type="button"
+            onClick={() => onInstallApp && onInstallApp(app)}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99]"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Coba Install Lagi</span>
+          </button>
+        ) : isInstalled ? (
           <button
             id={`app-btn-${app.id}`}
             type="button"
@@ -358,6 +502,27 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
             <span>Buka {app.shortName}</span>
             <ArrowUpRight className="w-3.5 h-3.5 text-slate-600" aria-hidden="true" />
           </button>
+        ) : isLicensed || isFree ? (
+          app.downloadUrl && app.sha256 ? (
+            <button
+              id={`app-btn-install-${app.id}`}
+              type="button"
+              onClick={() => onInstallApp && onInstallApp(app)}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Install {app.shortName} (v{app.latestVersion || app.version})</span>
+            </button>
+          ) : (
+            <button
+              id={`app-btn-no-download-${app.id}`}
+              type="button"
+              disabled
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 text-slate-500 text-xs font-semibold cursor-not-allowed border border-slate-700/50"
+            >
+              <span>Download Belum Tersedia</span>
+            </button>
+          )
         ) : (
           <button
             id={`app-btn-license-${app.id}`}

@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 let staticServer = null;
 const CONTENT_ENGINE_REGISTRY_URL = process.env.ALCO_CONTENT_ENGINE_REGISTRY_URL
@@ -80,22 +82,37 @@ function getUniqueExistingPaths(pathsToCheck) {
 }
 
 function buildExecutableCandidates(appDefinition) {
+  const localAppData = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Local');
+  const appData = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
+
   const installRoots = [
-    path.join(process.env.LOCALAPPDATA || '', 'Programs'),
-    process.env.ProgramFiles || '',
-    process.env['ProgramFiles(x86)'] || '',
+    path.join(localAppData, 'Programs'),
+    path.join(appData, '..', 'Local', 'Programs'),
+    process.env.ProgramFiles || 'C:\\Program Files',
+    process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)',
+  ].filter(Boolean);
+
+  const folderNames = [
+    appDefinition.label,
+    appDefinition.projectFolder,
+    appDefinition.id,
+    appDefinition.id?.replace(/^alco-/, ''),
+    `ALCO ${appDefinition.id?.replace(/^alco-/, '').replace(/-/g, ' ')}`,
   ].filter(Boolean);
 
   const installedCandidates = installRoots.flatMap((root) => (
-    appDefinition.executableNames.flatMap((executableName) => [
-      path.join(root, appDefinition.label, executableName),
-      path.join(root, appDefinition.projectFolder, executableName),
-    ])
+    folderNames.flatMap((folderName) => (
+      appDefinition.executableNames.flatMap((executableName) => [
+        path.join(root, folderName, executableName),
+        path.join(root, executableName),
+      ])
+    ))
   ));
 
   const developmentCandidates = appDefinition.executableNames.flatMap((executableName) => [
     path.resolve(__dirname, '..', '..', appDefinition.projectFolder, 'dist-electron', 'win-unpacked', executableName),
     path.resolve(__dirname, '..', '..', 'Alco Ecosystem', appDefinition.projectFolder, 'dist-electron', 'win-unpacked', executableName),
+    path.resolve(__dirname, '..', '..', appDefinition.id || '', 'dist-electron', 'win-unpacked', executableName),
   ]);
 
   return [
@@ -107,6 +124,109 @@ function buildExecutableCandidates(appDefinition) {
 
 function resolveDesktopAppExecutable(appDefinition) {
   return getUniqueExistingPaths(buildExecutableCandidates(appDefinition))[0] || null;
+}
+
+/**
+ * Calculates SHA-256 hash of a file on disk.
+ * @param {string} filePath
+ * @returns {Promise<string>} Hex-encoded SHA-256 hash
+ */
+function calculateFileSha256(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', (err) => reject(err));
+  });
+}
+
+/**
+ * Downloads a file with progress tracking, supporting HTTP redirects (crucial for GitHub Releases).
+ * @param {string} rawUrl
+ * @param {string} destPath
+ * @param {(progress: { bytesReceived: number, totalBytes: number, progress: number }) => void} onProgress
+ * @param {number} maxRedirects
+ * @returns {Promise<{ destPath: string, totalBytes: number }>}
+ */
+function downloadFileWithProgress(rawUrl, destPath, onProgress, maxRedirects = 7) {
+  return new Promise((resolve, reject) => {
+    if (maxRedirects < 0) {
+      return reject(new Error('Terlalu banyak pengalihan URL (redirect limit exceeded).'));
+    }
+
+    if (!isValidSecureUrl(rawUrl)) {
+      return reject(new Error('Download URL harus menggunakan protokol HTTPS yang valid.'));
+    }
+
+    const parsedUrl = new URL(rawUrl);
+    const client = parsedUrl.protocol === 'https:' ? https : http;
+
+    const req = client.get(rawUrl, {
+      headers: {
+        'User-Agent': 'ALCO-Hub-Desktop-Distribution/1.0',
+        'Accept': '*/*',
+      },
+    }, (res) => {
+      const statusCode = res.statusCode || 0;
+      const location = res.headers.location;
+
+      // Handle standard HTTP redirects (GitHub releases 302 -> objects.githubusercontent.com / AWS S3)
+      if ([301, 302, 303, 307, 308].includes(statusCode) && location) {
+        res.resume();
+        const redirectUrl = new URL(location, rawUrl).toString();
+        return downloadFileWithProgress(redirectUrl, destPath, onProgress, maxRedirects - 1)
+          .then(resolve)
+          .catch(reject);
+      }
+
+      if (statusCode < 200 || statusCode >= 300) {
+        res.resume();
+        return reject(new Error(`Gagal mengunduh installer (HTTP Status ${statusCode}).`));
+      }
+
+      const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+      let bytesReceived = 0;
+      let lastReportTime = 0;
+
+      const fileStream = fs.createWriteStream(destPath);
+
+      res.on('data', (chunk) => {
+        bytesReceived += chunk.length;
+        fileStream.write(chunk);
+
+        const now = Date.now();
+        if (now - lastReportTime > 60 || bytesReceived === totalBytes) {
+          lastReportTime = now;
+          const progress = totalBytes > 0 ? Math.min(100, Math.round((bytesReceived / totalBytes) * 100)) : 0;
+          if (typeof onProgress === 'function') {
+            onProgress({ bytesReceived, totalBytes, progress });
+          }
+        }
+      });
+
+      res.on('end', () => {
+        fileStream.end(() => {
+          resolve({ destPath, totalBytes: bytesReceived });
+        });
+      });
+
+      res.on('error', (err) => {
+        fileStream.destroy();
+        try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch {}
+        reject(err);
+      });
+    });
+
+    req.on('error', (err) => {
+      try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch {}
+      reject(err);
+    });
+
+    req.setTimeout(60000, () => {
+      req.destroy(new Error('Koneksi timeout saat mengunduh installer dari GitHub.'));
+    });
+  });
 }
 
 function readJsonFile(filePath) {
@@ -335,31 +455,297 @@ ipcMain.handle('open-external', async (_event, rawUrl) => {
 });
 
 const desktopApps = {
-  'content-engine': {
+  'alco-content-engine': {
+    id: 'alco-content-engine',
     label: 'ALCO Content Engine',
     envKey: 'ALCO_CONTENT_ENGINE_EXE',
     projectFolder: 'Alco Content Engine',
-    executableNames: ['ALCO Content Engine.exe', 'electron.exe'],
+    executableNames: ['ALCO Content Engine.exe', 'alco-content-engine.exe', 'electron.exe'],
   },
-  'auto-motion': {
+  'content-engine': {
+    id: 'alco-content-engine',
+    label: 'ALCO Content Engine',
+    envKey: 'ALCO_CONTENT_ENGINE_EXE',
+    projectFolder: 'Alco Content Engine',
+    executableNames: ['ALCO Content Engine.exe', 'alco-content-engine.exe', 'electron.exe'],
+  },
+  'alco-auto-motion': {
+    id: 'alco-auto-motion',
     label: 'ALCO Auto Motion',
     envKey: 'ALCO_AUTO_MOTION_EXE',
     projectFolder: 'Alco Auto Motion',
-    executableNames: ['ALCO Auto Motion.exe', 'electron.exe'],
+    executableNames: ['ALCO Auto Motion.exe', 'alco-auto-motion.exe', 'electron.exe'],
   },
-  'creative-system': {
+  'auto-motion': {
+    id: 'alco-auto-motion',
+    label: 'ALCO Auto Motion',
+    envKey: 'ALCO_AUTO_MOTION_EXE',
+    projectFolder: 'Alco Auto Motion',
+    executableNames: ['ALCO Auto Motion.exe', 'alco-auto-motion.exe', 'electron.exe'],
+  },
+  'alco-creative-system': {
+    id: 'alco-creative-system',
     label: 'ALCO Creative System',
     envKey: 'ALCO_CREATIVE_SYSTEM_EXE',
     projectFolder: 'Alco Creative System',
-    executableNames: ['ALCO Creative System.exe', 'electron.exe'],
+    executableNames: ['ALCO Creative System.exe', 'alco-creative-system.exe', 'electron.exe'],
   },
-  'product-forge': {
+  'creative-system': {
+    id: 'alco-creative-system',
+    label: 'ALCO Creative System',
+    envKey: 'ALCO_CREATIVE_SYSTEM_EXE',
+    projectFolder: 'Alco Creative System',
+    executableNames: ['ALCO Creative System.exe', 'alco-creative-system.exe', 'electron.exe'],
+  },
+  'alco-product-forge': {
+    id: 'alco-product-forge',
     label: 'ALCO Product Forge',
     envKey: 'ALCO_PRODUCT_FORGE_EXE',
     projectFolder: 'Alco Product Forge',
-    executableNames: ['ALCO Product Forge.exe', 'electron.exe'],
+    executableNames: ['ALCO Product Forge.exe', 'alco-product-forge.exe', 'electron.exe'],
+  },
+  'product-forge': {
+    id: 'alco-product-forge',
+    label: 'ALCO Product Forge',
+    envKey: 'ALCO_PRODUCT_FORGE_EXE',
+    projectFolder: 'Alco Product Forge',
+    executableNames: ['ALCO Product Forge.exe', 'alco-product-forge.exe', 'electron.exe'],
+  },
+  'alco-meta-ads-analyst': {
+    id: 'alco-meta-ads-analyst',
+    label: 'ALCO Meta Ads Analyst',
+    envKey: 'ALCO_META_ADS_ANALYST_EXE',
+    projectFolder: 'Alco Meta Ads Analyst',
+    executableNames: ['ALCO Meta Ads Analyst.exe', 'alco-meta-ads-analyst.exe', 'electron.exe'],
+  },
+  'meta-ads-analyst': {
+    id: 'alco-meta-ads-analyst',
+    label: 'ALCO Meta Ads Analyst',
+    envKey: 'ALCO_META_ADS_ANALYST_EXE',
+    projectFolder: 'Alco Meta Ads Analyst',
+    executableNames: ['ALCO Meta Ads Analyst.exe', 'alco-meta-ads-analyst.exe', 'electron.exe'],
+  },
+  'alco-landing-page-analyst': {
+    id: 'alco-landing-page-analyst',
+    label: 'ALCO Landing Page Analyst',
+    envKey: 'ALCO_LANDING_PAGE_ANALYST_EXE',
+    projectFolder: 'Alco Landing Page Analyst',
+    executableNames: ['ALCO Landing Page Analyst.exe', 'alco-landing-page-analyst.exe', 'electron.exe'],
+  },
+  'landing-page-analyst': {
+    id: 'alco-landing-page-analyst',
+    label: 'ALCO Landing Page Analyst',
+    envKey: 'ALCO_LANDING_PAGE_ANALYST_EXE',
+    projectFolder: 'Alco Landing Page Analyst',
+    executableNames: ['ALCO Landing Page Analyst.exe', 'alco-landing-page-analyst.exe', 'electron.exe'],
   },
 };
+
+/**
+ * Resolves desktop app definition for known or dynamically created ALCO apps
+ */
+function getAppDefinition(appId, customApp) {
+  const normalizedId = (appId || '').toLowerCase().trim();
+  const slugWithoutPrefix = normalizedId.replace(/^alco-/, '');
+  const known = desktopApps[normalizedId] || desktopApps[slugWithoutPrefix];
+  if (known) return known;
+
+  const rawLabel = customApp?.name || `ALCO ${slugWithoutPrefix.split('-').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ')}`;
+  return {
+    id: normalizedId,
+    label: rawLabel,
+    envKey: `ALCO_${normalizedId.replace(/[^a-zA-Z0-9]/g, '_').toUpperCase()}_EXE`,
+    projectFolder: rawLabel,
+    executableNames: [`${rawLabel}.exe`, `${slugWithoutPrefix}.exe`, 'electron.exe'],
+  };
+}
+
+// 1. Check if a single desktop app is installed on the system
+ipcMain.handle('check-app-installed', async (_event, appId) => {
+  const appDefinition = getAppDefinition(appId);
+  const executablePath = resolveDesktopAppExecutable(appDefinition);
+  if (!executablePath) {
+    return { isInstalled: false, version: null, executablePath: null };
+  }
+  const localVersion = getLocalAppVersion(appDefinition, executablePath);
+  return {
+    isInstalled: true,
+    version: localVersion.version,
+    executablePath,
+  };
+});
+
+// 2. Check all known apps installation statuses
+ipcMain.handle('check-all-apps-installed', async () => {
+  const results = {};
+  const processedKeys = new Set();
+
+  for (const key of Object.keys(desktopApps)) {
+    const appDef = desktopApps[key];
+    const canonicalId = appDef.id || key;
+    if (processedKeys.has(canonicalId)) continue;
+    processedKeys.add(canonicalId);
+
+    const executablePath = resolveDesktopAppExecutable(appDef);
+    if (executablePath) {
+      const localVersion = getLocalAppVersion(appDef, executablePath);
+      const res = {
+        isInstalled: true,
+        version: localVersion.version,
+        executablePath,
+      };
+      results[canonicalId] = res;
+      results[key] = res;
+      if (canonicalId.replace(/^alco-/, '') !== canonicalId) {
+        results[canonicalId.replace(/^alco-/, '')] = res;
+      }
+    } else {
+      const res = {
+        isInstalled: false,
+        version: null,
+        executablePath: null,
+      };
+      results[canonicalId] = res;
+      results[key] = res;
+    }
+  }
+  return results;
+});
+
+// 3. Generic installer download, SHA-256 integrity verification, and execution
+ipcMain.handle('download-and-install-app', async (event, params) => {
+  const { appId, downloadUrl, sha256, latestVersion, appName } = params || {};
+
+  if (!appId) {
+    return { success: false, error: 'App ID tidak ditemukan.' };
+  }
+
+  if (!downloadUrl || !isValidSecureUrl(downloadUrl)) {
+    return { success: false, error: 'Download URL tidak valid atau tidak menggunakan protokol HTTPS resmi.' };
+  }
+
+  const cleanExpectedHash = (sha256 || '').trim().toLowerCase();
+  if (!cleanExpectedHash || cleanExpectedHash.length !== 64) {
+    return {
+      success: false,
+      error: 'SHA-256 Checksum resmi tidak ditemukan atau tidak valid (harus 64 karakter hex).',
+    };
+  }
+
+  const sendProgress = (status, progress, bytesReceived = 0, totalBytes = 0, message = '', error = '') => {
+    try {
+      event.sender.send('install-progress', {
+        appId,
+        status,
+        progress,
+        bytesReceived,
+        totalBytes,
+        message,
+        error,
+      });
+    } catch (e) {
+      console.warn('[Electron] Failed to send install-progress IPC event:', e);
+    }
+  };
+
+  // Setup temporary directory in user temp space
+  const tempDir = path.join(app.getPath('temp'), 'alco-hub-downloads');
+  try {
+    fs.mkdirSync(tempDir, { recursive: true });
+  } catch (err) {
+    return { success: false, error: `Gagal membuat direktori download: ${err.message}` };
+  }
+
+  const sanitizedAppId = appId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const tempDownloadPath = path.join(tempDir, `${sanitizedAppId}-${Date.now()}.download.tmp`);
+  const finalInstallerPath = path.join(tempDir, `${sanitizedAppId}-${latestVersion || 'setup'}.exe`);
+
+  try {
+    // Phase 1: Download binary stream with progress
+    sendProgress('downloading', 0, 0, 0, 'Memulai download installer dari GitHub Releases...');
+
+    await downloadFileWithProgress(downloadUrl, tempDownloadPath, ({ bytesReceived, totalBytes, progress }) => {
+      sendProgress('downloading', progress, bytesReceived, totalBytes, `Mengunduh installer (${progress}%)...`);
+    });
+
+    // Phase 2: SHA-256 Integrity Verification
+    sendProgress('verifying', 100, 0, 0, 'Memverifikasi checksum SHA-256 binary installer...');
+
+    const computedHash = await calculateFileSha256(tempDownloadPath);
+
+    if (computedHash.toLowerCase() !== cleanExpectedHash) {
+      // Clean up corrupt or unverified downloaded file immediately
+      try {
+        if (fs.existsSync(tempDownloadPath)) fs.unlinkSync(tempDownloadPath);
+      } catch {}
+
+      const errorMsg = 'Installer verification failed. Checksum SHA-256 tidak cocok dengan metadata rilis resmi.';
+      sendProgress('failed', 0, 0, 0, '', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+
+    // Phase 3: Finalize installer file path
+    try {
+      if (fs.existsSync(finalInstallerPath)) fs.unlinkSync(finalInstallerPath);
+      fs.renameSync(tempDownloadPath, finalInstallerPath);
+    } catch (err) {
+      fs.copyFileSync(tempDownloadPath, finalInstallerPath);
+      try { fs.unlinkSync(tempDownloadPath); } catch {}
+    }
+
+    // Phase 4: Execute installer via detached process
+    sendProgress('installing', 100, 0, 0, 'Menjalankan installer di Windows...');
+
+    try {
+      if (process.platform === 'win32') {
+        const child = spawn(finalInstallerPath, [], {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
+      } else {
+        await shell.openPath(finalInstallerPath);
+      }
+    } catch (spawnErr) {
+      const openErr = await shell.openPath(finalInstallerPath);
+      if (openErr) {
+        throw new Error(`Gagal membuka installer: ${spawnErr?.message || openErr}`);
+      }
+    }
+
+    sendProgress('ready-to-install', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.');
+
+    return {
+      success: true,
+      message: 'Installer berhasil diunduh, diverifikasi, dan dijalankan.',
+    };
+  } catch (err) {
+    try {
+      if (fs.existsSync(tempDownloadPath)) fs.unlinkSync(tempDownloadPath);
+    } catch {}
+
+    const errorMsg = err instanceof Error ? err.message : 'Terjadi kesalahan saat proses download & install.';
+    sendProgress('failed', 0, 0, 0, '', errorMsg);
+    return { success: false, error: errorMsg };
+  }
+});
+
+// 4. Open Desktop App
+ipcMain.handle('open-desktop-app', async (_event, appId) => {
+  const appDefinition = getAppDefinition(appId);
+  const executablePath = resolveDesktopAppExecutable(appDefinition);
+  if (!executablePath) {
+    return {
+      success: false,
+      error: `${appDefinition.label} belum ditemukan di komputer ini. Silakan pasang installer terlebih dahulu melalui ALCO Hub.`,
+    };
+  }
+
+  const errorMessage = await shell.openPath(executablePath);
+  return errorMessage
+    ? { success: false, error: errorMessage }
+    : { success: true };
+});
 
 ipcMain.handle('check-content-engine-update', async () => {
   const appDefinition = desktopApps['content-engine'];
@@ -431,26 +817,6 @@ ipcMain.handle('check-content-engine-update', async () => {
       registryUrl: CONTENT_ENGINE_REGISTRY_URL,
     };
   }
-});
-
-ipcMain.handle('open-desktop-app', async (_event, appId) => {
-  const appDefinition = desktopApps[appId];
-  if (!appDefinition) {
-    return { success: false, error: 'Aplikasi desktop ALCO tidak dikenal.' };
-  }
-
-  const executablePath = resolveDesktopAppExecutable(appDefinition);
-  if (!executablePath) {
-    return {
-      success: false,
-      error: `${appDefinition.label} belum ditemukan. Pasang installer ${appDefinition.label} terlebih dahulu.`,
-    };
-  }
-
-  const errorMessage = await shell.openPath(executablePath);
-  return errorMessage
-    ? { success: false, error: errorMessage }
-    : { success: true };
 });
 
 app.whenReady().then(() => {

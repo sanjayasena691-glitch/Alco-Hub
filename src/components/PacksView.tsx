@@ -17,6 +17,8 @@ import {
   ContentEngineUpdateResult,
   ContentEngineUpdateStatus,
   UserLicense,
+  AppLocalInstallation,
+  AppInstallProgress,
 } from '../types';
 import { FUTURE_PACK_CATEGORIES } from '../config/ecosystemPacks';
 import { ApplicationCard } from './ApplicationCard';
@@ -26,7 +28,10 @@ interface PacksViewProps {
   packs: EcosystemPack[];
   apps: EcosystemApp[];
   userLicenses: Record<string, UserLicense>;
+  localInstallations?: Record<string, AppLocalInstallation>;
+  installProgressMap?: Record<string, AppInstallProgress>;
   onOpenApp: (app: EcosystemApp) => void;
+  onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
   onRequestLicense: (app: EcosystemApp) => void;
   updateResult: ContentEngineUpdateResult | null;
@@ -37,7 +42,10 @@ export const PacksView: React.FC<PacksViewProps> = ({
   packs,
   apps,
   userLicenses,
+  localInstallations = {},
+  installProgressMap = {},
   onOpenApp,
+  onInstallApp,
   onUpdateApp,
   onRequestLicense,
   updateResult,
@@ -230,28 +238,37 @@ export const PacksView: React.FC<PacksViewProps> = ({
               </h3>
 
               <div className="grid grid-cols-1 gap-4">
-                {selectedPackApps.map((app) => (
-                  <ApplicationCard
-                    key={app.id}
-                    app={app}
-                    userLicenses={userLicenses}
-                    onOpenApp={(a) => {
-                      setSelectedPackId(null);
-                      onOpenApp(a);
-                    }}
-                    onUpdateApp={(a) => {
-                      setSelectedPackId(null);
-                      onUpdateApp(a);
-                    }}
-                    onRequestLicense={(a) => {
-                      setSelectedPackId(null);
-                      onRequestLicense(a);
-                    }}
-                    updateResult={updateResult}
-                    updateStatus={updateStatus}
-                    featured
-                  />
-                ))}
+                {selectedPackApps.map((app) => {
+                  const canonicalId = app.appId || app.id;
+                  return (
+                    <ApplicationCard
+                      key={app.id}
+                      app={app}
+                      userLicenses={userLicenses}
+                      installation={localInstallations[canonicalId] || localInstallations[app.id]}
+                      installProgress={installProgressMap[canonicalId] || installProgressMap[app.id]}
+                      onOpenApp={(a) => {
+                        setSelectedPackId(null);
+                        onOpenApp(a);
+                      }}
+                      onInstallApp={(a) => {
+                        setSelectedPackId(null);
+                        onInstallApp && onInstallApp(a);
+                      }}
+                      onUpdateApp={(a) => {
+                        setSelectedPackId(null);
+                        onUpdateApp(a);
+                      }}
+                      onRequestLicense={(a) => {
+                        setSelectedPackId(null);
+                        onRequestLicense(a);
+                      }}
+                      updateResult={updateResult}
+                      updateStatus={updateStatus}
+                      featured
+                    />
+                  );
+                })}
               </div>
             </div>
 

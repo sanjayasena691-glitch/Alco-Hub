@@ -19,34 +19,53 @@ import {
   ContentEngineUpdateResult,
   ContentEngineUpdateStatus,
   UserLicense,
+  AppLocalInstallation,
+  AppInstallProgress,
 } from '../types';
 import { isAppLicensed } from '../services/storeService';
 
 interface UpdatesViewProps {
   apps: EcosystemApp[];
   userLicenses: Record<string, UserLicense>;
+  localInstallations?: Record<string, AppLocalInstallation>;
+  installProgressMap?: Record<string, AppInstallProgress>;
   updateResult: ContentEngineUpdateResult | null;
   updateStatus: ContentEngineUpdateStatus;
   onCheckUpdate: () => void;
   onPerformUpdate: (app: EcosystemApp) => void;
+  onInstallApp?: (app: EcosystemApp) => void;
 }
 
 export const UpdatesView: React.FC<UpdatesViewProps> = ({
   apps,
   userLicenses,
+  localInstallations = {},
+  installProgressMap = {},
   updateResult,
   updateStatus,
   onCheckUpdate,
   onPerformUpdate,
+  onInstallApp,
 }) => {
   const [updatingAppId, setUpdatingAppId] = useState<string | null>(null);
   const [updatedNotice, setUpdatedNotice] = useState<string | null>(null);
 
-  const appsWithUpdates = apps.filter(
-    (app) => app.latestVersion !== app.version || (app.id === 'content-engine' && updateStatus === 'update-available')
-  );
+  const appsWithUpdates = apps.filter((app) => {
+    const canonicalId = app.appId || app.id;
+    const inst = localInstallations[canonicalId] || localInstallations[app.id];
+    const localVer = inst?.version || app.version;
+    return (
+      (app.latestVersion && localVer && app.latestVersion !== localVer) ||
+      (app.id === 'content-engine' && updateStatus === 'update-available')
+    );
+  });
 
   const handleUpdate = (app: EcosystemApp) => {
+    if (onInstallApp && app.downloadUrl && app.sha256) {
+      onInstallApp(app);
+      return;
+    }
+
     setUpdatingAppId(app.id);
     setTimeout(() => {
       onPerformUpdate(app);
