@@ -129,6 +129,16 @@ const ACCENT_STYLES: Record<
     badgeBorder: 'border-amber-500/20',
     primaryBtn: 'bg-amber-600 hover:bg-amber-500 text-white',
   },
+  rose: {
+    iconBg: 'bg-rose-500/10',
+    iconBorder: 'border-rose-500/30',
+    iconText: 'text-rose-400',
+    glowBorder: 'hover:border-rose-500/40',
+    badgeBg: 'bg-rose-500/10',
+    badgeText: 'text-rose-300',
+    badgeBorder: 'border-rose-500/20',
+    primaryBtn: 'bg-rose-600 hover:bg-rose-500 text-white',
+  },
 };
 
 export const ApplicationCard: React.FC<ApplicationCardProps> = ({

@@ -1,9 +1,13 @@
 /**
  * ALCO Hub - Global TypeScript Types & Interfaces
- * Ekosistem Aladzan Corpora (Launcher & Product Library)
+ * Ekosistem Aladzan Corpora (Private App Store & Distribution Center)
  */
 
-export type NavigationTab = 'home' | 'apps' | 'packs' | 'updates' | 'settings';
+export type NavigationTab = 'home' | 'store' | 'library' | 'packs' | 'updates' | 'admin' | 'settings';
+
+export type PricingType = 'free' | 'licensed' | 'coming-soon';
+
+export type UserLicenseStatus = 'active' | 'inactive' | 'expired' | 'none';
 
 export type AppStatus =
   | 'installed'
@@ -22,7 +26,8 @@ export type ProductAccent =
   | 'emerald'
   | 'teal'
   | 'indigo'
-  | 'amber';
+  | 'amber'
+  | 'rose';
 
 export type ProductIconName =
   | 'target'
@@ -32,7 +37,8 @@ export type ProductIconName =
   | 'layout'
   | 'search'
   | 'package'
-  | 'layers';
+  | 'layers'
+  | 'shield';
 
 export interface EcosystemApp {
   id: string;
@@ -43,14 +49,38 @@ export interface EcosystemApp {
   packId: string;
   accent: ProductAccent;
   iconName: ProductIconName;
-  status: AppStatus;
-  version?: string;
-  latestVersion?: string;
+  
+  // Distribution & Commercial Model
+  pricingType: PricingType;
+  priceLabel?: string;
+  currency?: string;
+  isPublished?: boolean;
+  publishedAt?: string;
+  
+  // Versions
+  version: string;
+  latestVersion: string;
+  releaseNotes?: string;
+  downloadUrl?: string;
+  
+  // Runtime & Gating
+  status?: AppStatus;
   launchMode: 'desktop' | 'external' | 'disabled';
   url?: string;
   comingSoon?: boolean;
   features?: string[];
   lastOpenedText?: string;
+  requiredLicenseAppId?: string;
+}
+
+export interface UserLicense {
+  appId: string;
+  licenseKey: string;
+  licensedTo: string;
+  activatedAt: string;
+  status: UserLicenseStatus;
+  expiresAt?: string;
+  tier?: string;
 }
 
 export interface EcosystemPack {
@@ -79,6 +109,13 @@ export interface ContentEngineUpdateResult {
     downloadUrl: string;
     sha256: string;
   };
+}
+
+export interface ContactAlcoConfig {
+  whatsappNumber: string;
+  supportEmail: string;
+  companyName: string;
+  ownerName: string;
 }
 
 declare global {

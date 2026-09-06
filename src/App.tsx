@@ -1,7 +1,8 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * ALCO Hub - Ecosystem Launcher & Product Library
+ * ALCO Hub - Private App Store & Official Distribution Center
+ * Ekosistem Software Resmi Aladzan Corpora
  */
 
 import React, { useState, useEffect } from 'react';
@@ -11,31 +12,55 @@ import {
   ContentEngineUpdateResult,
   EcosystemApp,
   EcosystemPack,
+  UserLicense,
+  ContactAlcoConfig,
 } from './types';
-import { ECOSYSTEM_APPS, HUB_META } from './config/ecosystemApps';
+import { HUB_META } from './config/ecosystemApps';
 import { ECOSYSTEM_PACKS } from './config/ecosystemPacks';
 import { getUserApiKey } from './services/aiNavigatorService';
+import {
+  getCatalogApps,
+  saveCatalogApps,
+  getUserLicenses,
+  getContactConfig,
+  saveContactConfig,
+  isAppLicensed,
+} from './services/storeService';
 
 import { HeaderNav } from './components/HeaderNav';
 import { HomeView } from './components/HomeView';
 import { AppsView } from './components/AppsView';
+import { LibraryView } from './components/LibraryView';
 import { PacksView } from './components/PacksView';
 import { UpdatesView } from './components/UpdatesView';
+import { AdminView } from './components/AdminView';
 import { SettingsView } from './components/SettingsView';
 import { ApiKeyModal } from './components/ApiKeyModal';
+import { LicenseModal } from './components/LicenseModal';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavigationTab>('home');
   const [apiKey, setApiKey] = useState<string>('');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
 
+  // Store & Licensing States
+  const [apps, setApps] = useState<EcosystemApp[]>([]);
+  const [userLicenses, setUserLicenses] = useState<Record<string, UserLicense>>({});
+  const [contactConfig, setContactConfig] = useState<ContactAlcoConfig>(getContactConfig());
+  const [selectedAppForLicense, setSelectedAppForLicense] = useState<EcosystemApp | null>(null);
+  const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
+
   // Update Checker States
   const [contentEngineUpdate, setContentEngineUpdate] = useState<ContentEngineUpdateResult | null>(null);
   const [contentEngineUpdateStatus, setContentEngineUpdateStatus] = useState<ContentEngineUpdateStatus>('checking');
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
-  // Load API Key on initial mount
+  // Load Initial Catalog & User Licenses
   useEffect(() => {
+    const loadedApps = getCatalogApps();
+    setApps(loadedApps);
+    setUserLicenses(getUserLicenses());
+    setContactConfig(getContactConfig());
     const key = getUserApiKey();
     setApiKey(key);
   }, []);
@@ -69,7 +94,15 @@ export default function App() {
   };
 
   const handleOpenApp = (app: EcosystemApp) => {
-    if (app.comingSoon || app.status === 'coming-soon') {
+    if (app.comingSoon || app.pricingType === 'coming-soon' || app.status === 'coming-soon') {
+      return;
+    }
+
+    // License Check
+    const hasLicense = isAppLicensed(app, userLicenses);
+    if (!hasLicense && app.pricingType === 'licensed') {
+      setSelectedAppForLicense(app);
+      setIsLicenseModalOpen(true);
       return;
     }
 
@@ -107,23 +140,34 @@ export default function App() {
     }
   };
 
-  const handleUpdateApp = (app: EcosystemApp) => {
-    if (app.id === 'content-engine') {
-      const latestVer = contentEngineUpdate?.latestVersion || contentEngineUpdate?.registry?.latestVersion || '0.1.1';
-      window.alert(
-        `Update v${latestVer} tersedia untuk ${app.name}.\n\nInstaller otomatis akan diluncurkan pada rilis Stage 2. Untuk saat ini silakan unduh versi terbaru dari GitHub Releases.`
-      );
-    } else {
-      window.alert(`Pengecekan update untuk ${app.name} belum tersedia di registry saat ini.`);
-    }
+  const handleRequestLicense = (app: EcosystemApp) => {
+    setSelectedAppForLicense(app);
+    setIsLicenseModalOpen(true);
   };
 
-  const handleExplorePack = (pack: EcosystemPack) => {
-    setActiveTab('packs');
+  const handlePerformUpdate = (app: EcosystemApp) => {
+    // Update local app version in catalog while preserving licenses!
+    const updatedApps = apps.map((a) => {
+      if (a.id === app.id) {
+        return {
+          ...a,
+          version: a.latestVersion,
+        };
+      }
+      return a;
+    });
+
+    saveCatalogApps(updatedApps);
+    setApps(updatedApps);
   };
 
-  const coreApps = ECOSYSTEM_APPS.filter((a) => a.packId === 'core-system');
-  const recentApp = ECOSYSTEM_APPS.find((a) => a.id === 'content-engine');
+  const handleLicenseActivated = (appId: string) => {
+    setUserLicenses(getUserLicenses());
+  };
+
+  const coreApps = apps.filter((a) => a.packId === 'core-system');
+  const recentApp = apps.find((a) => a.id === 'content-engine') || apps[0];
+  const activeLicensesCount = Object.keys(userLicenses).length;
 
   return (
     <div id="alco-hub-app" className="min-h-screen bg-[#0b0f17] text-slate-100 flex flex-col justify-between selection:bg-indigo-500/30 selection:text-indigo-200">
@@ -134,6 +178,7 @@ export default function App() {
         apiKey={apiKey}
         onRequestApiKey={() => setIsApiKeyModalOpen(true)}
         updateStatus={contentEngineUpdateStatus}
+        activeLicensesCount={activeLicensesCount}
       />
 
       {/* 2. Main Content Canvas */}
@@ -142,11 +187,13 @@ export default function App() {
           <HomeView
             coreApps={coreApps}
             packs={ECOSYSTEM_PACKS}
-            allApps={ECOSYSTEM_APPS}
+            allApps={apps}
+            userLicenses={userLicenses}
             recentApp={recentApp}
             onOpenApp={handleOpenApp}
-            onUpdateApp={handleUpdateApp}
-            onExplorePack={handleExplorePack}
+            onUpdateApp={handlePerformUpdate}
+            onRequestLicense={handleRequestLicense}
+            onExplorePack={() => setActiveTab('packs')}
             onNavigateTab={(tab) => setActiveTab(tab)}
             updateResult={contentEngineUpdate}
             updateStatus={contentEngineUpdateStatus}
@@ -155,12 +202,27 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'apps' && (
+        {activeTab === 'store' && (
           <AppsView
-            apps={ECOSYSTEM_APPS}
+            apps={apps}
             packs={ECOSYSTEM_PACKS}
+            userLicenses={userLicenses}
             onOpenApp={handleOpenApp}
-            onUpdateApp={handleUpdateApp}
+            onUpdateApp={handlePerformUpdate}
+            onRequestLicense={handleRequestLicense}
+            updateResult={contentEngineUpdate}
+            updateStatus={contentEngineUpdateStatus}
+          />
+        )}
+
+        {activeTab === 'library' && (
+          <LibraryView
+            apps={apps}
+            userLicenses={userLicenses}
+            onOpenApp={handleOpenApp}
+            onUpdateApp={handlePerformUpdate}
+            onRequestLicense={handleRequestLicense}
+            onGoToStore={() => setActiveTab('store')}
             updateResult={contentEngineUpdate}
             updateStatus={contentEngineUpdateStatus}
           />
@@ -169,9 +231,11 @@ export default function App() {
         {activeTab === 'packs' && (
           <PacksView
             packs={ECOSYSTEM_PACKS}
-            apps={ECOSYSTEM_APPS}
+            apps={apps}
+            userLicenses={userLicenses}
             onOpenApp={handleOpenApp}
-            onUpdateApp={handleUpdateApp}
+            onUpdateApp={handlePerformUpdate}
+            onRequestLicense={handleRequestLicense}
             updateResult={contentEngineUpdate}
             updateStatus={contentEngineUpdateStatus}
           />
@@ -179,12 +243,21 @@ export default function App() {
 
         {activeTab === 'updates' && (
           <UpdatesView
-            apps={ECOSYSTEM_APPS}
+            apps={apps}
+            userLicenses={userLicenses}
             updateResult={contentEngineUpdate}
             updateStatus={contentEngineUpdateStatus}
-            onRefreshUpdates={checkUpdates}
-            onUpdateApp={handleUpdateApp}
-            isChecking={isCheckingUpdate}
+            onCheckUpdate={checkUpdates}
+            onPerformUpdate={handlePerformUpdate}
+          />
+        )}
+
+        {activeTab === 'admin' && (
+          <AdminView
+            apps={apps}
+            contactConfig={contactConfig}
+            onUpdateCatalog={(newApps) => setApps(newApps)}
+            onUpdateContactConfig={(newCfg) => setContactConfig(newCfg)}
           />
         )}
 
@@ -226,6 +299,19 @@ export default function App() {
           if (window.alcoHub?.openExternal) window.alcoHub.openExternal(url);
           else window.open(url, '_blank', 'noopener,noreferrer');
         }}
+      />
+
+      {/* 5. Official License Activation & Purchase Modal */}
+      <LicenseModal
+        app={selectedAppForLicense}
+        isOpen={isLicenseModalOpen}
+        onClose={() => {
+          setIsLicenseModalOpen(false);
+          setSelectedAppForLicense(null);
+        }}
+        userLicense={selectedAppForLicense ? userLicenses[selectedAppForLicense.id] : undefined}
+        contactConfig={contactConfig}
+        onLicenseActivated={handleLicenseActivated}
       />
     </div>
   );

@@ -1,6 +1,6 @@
 {
   "name": "ALCO Hub",
-  "description": "Pusat kerja ekosistem ALCO untuk digital marketer pemula.",
+  "description": "Pusat distribusi resmi, private app store, dan manajemen lisensi aplikasi ekosistem Aladzan Corpora.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

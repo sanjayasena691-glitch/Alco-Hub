@@ -1,20 +1,19 @@
 /**
  * ALCO Hub - Header & Ecosystem Navigation
- * Desktop-first control center header
+ * Desktop-first Private App Store control center header
  */
 
 import React from 'react';
 import {
-  Layers,
   Home,
+  ShoppingBag,
   Grid,
   Package,
   RefreshCw,
   Settings,
   Key,
   Monitor,
-  AlertCircle,
-  Sparkles,
+  ShieldAlert,
 } from 'lucide-react';
 import { NavigationTab, ContentEngineUpdateStatus } from '../types';
 import { getMaskedApiKey } from '../services/aiNavigatorService';
@@ -25,6 +24,7 @@ interface HeaderNavProps {
   apiKey: string;
   onRequestApiKey: () => void;
   updateStatus: ContentEngineUpdateStatus;
+  activeLicensesCount?: number;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -33,6 +33,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   apiKey,
   onRequestApiKey,
   updateStatus,
+  activeLicensesCount = 0,
 }) => {
   const hasUpdate = updateStatus === 'update-available';
 
@@ -43,9 +44,19 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
       icon: <Home className="w-4 h-4" aria-hidden="true" />,
     },
     {
-      id: 'apps',
-      label: 'APPS',
+      id: 'store',
+      label: 'APP STORE',
+      icon: <ShoppingBag className="w-4 h-4" aria-hidden="true" />,
+    },
+    {
+      id: 'library',
+      label: 'MY APPS',
       icon: <Grid className="w-4 h-4" aria-hidden="true" />,
+      badge: activeLicensesCount > 0 ? (
+        <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-indigo-500 text-white">
+          {activeLicensesCount}
+        </span>
+      ) : undefined,
     },
     {
       id: 'packs',
@@ -59,6 +70,11 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
       badge: hasUpdate ? (
         <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
       ) : undefined,
+    },
+    {
+      id: 'admin',
+      label: 'OWNER PORTAL',
+      icon: <ShieldAlert className="w-4 h-4 text-amber-400" aria-hidden="true" />,
     },
     {
       id: 'settings',
@@ -95,7 +111,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                   ALCO HUB
                 </span>
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                  v1.0
+                  Private Store
                 </span>
               </div>
               <p
@@ -108,7 +124,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
           </div>
 
           {/* Center Navigation Tabs */}
-          <nav id="alco-main-nav" className="hidden md:flex items-center gap-1 bg-slate-900/90 p-1 rounded-lg border border-slate-800">
+          <nav id="alco-main-nav" className="hidden lg:flex items-center gap-1 bg-slate-900/90 p-1 rounded-lg border border-slate-800">
             {navItems.map((item) => {
               const isActive = activeTab === item.id;
               return (
@@ -117,7 +133,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                   id={`nav-tab-${item.id}`}
                   type="button"
                   onClick={() => onSelectTab(item.id)}
-                  className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-md text-xs font-bold tracking-wider transition-all relative ${
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold tracking-wider transition-all relative ${
                     isActive
                       ? 'bg-slate-800 text-white shadow-xs'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -131,7 +147,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
             })}
           </nav>
 
-          {/* Right Controls: API Key & Desktop Status */}
+          {/* Right Controls */}
           <div className="flex items-center gap-2.5 shrink-0">
             <button
               id="header-api-key-btn"
@@ -151,16 +167,16 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
 
             <div
               id="desktop-runtime-badge"
-              className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900/80 text-slate-400 border border-slate-800"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900/80 text-slate-400 border border-slate-800"
             >
               <Monitor className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Electron Desktop</span>
+              <span>Desktop Runtime</span>
             </div>
           </div>
         </div>
 
-        {/* Mobile Navigation bar */}
-        <div className="md:hidden flex items-center justify-around py-2 border-t border-slate-800/60 overflow-x-auto gap-1">
+        {/* Mobile / Tablet Navigation bar */}
+        <div className="lg:hidden flex items-center justify-start py-2 border-t border-slate-800/60 overflow-x-auto gap-1">
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (

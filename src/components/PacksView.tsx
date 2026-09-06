@@ -6,28 +6,29 @@
 import React, { useState } from 'react';
 import {
   Layers,
-  ArrowRight,
-  Sparkles,
-  TrendingUp,
-  Layout,
-  Search,
-  CheckCircle2,
-  Clock,
   ChevronRight,
   X,
-  ExternalLink,
   ShieldCheck,
-  Zap,
+  Lock,
 } from 'lucide-react';
-import { EcosystemPack, EcosystemApp, ContentEngineUpdateResult, ContentEngineUpdateStatus } from '../types';
+import {
+  EcosystemPack,
+  EcosystemApp,
+  ContentEngineUpdateResult,
+  ContentEngineUpdateStatus,
+  UserLicense,
+} from '../types';
 import { FUTURE_PACK_CATEGORIES } from '../config/ecosystemPacks';
 import { ApplicationCard } from './ApplicationCard';
+import { isAppLicensed } from '../services/storeService';
 
 interface PacksViewProps {
   packs: EcosystemPack[];
   apps: EcosystemApp[];
+  userLicenses: Record<string, UserLicense>;
   onOpenApp: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
+  onRequestLicense: (app: EcosystemApp) => void;
   updateResult: ContentEngineUpdateResult | null;
   updateStatus: ContentEngineUpdateStatus;
 }
@@ -35,8 +36,10 @@ interface PacksViewProps {
 export const PacksView: React.FC<PacksViewProps> = ({
   packs,
   apps,
+  userLicenses,
   onOpenApp,
   onUpdateApp,
+  onRequestLicense,
   updateResult,
   updateStatus,
 }) => {
@@ -100,26 +103,37 @@ export const PacksView: React.FC<PacksViewProps> = ({
                       Included Modules
                     </span>
                     <div className="grid grid-cols-1 gap-2">
-                      {packApps.map((app) => (
-                        <div
-                          key={app.id}
-                          className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span
-                              className={`w-2 h-2 rounded-full shrink-0 ${
-                                app.comingSoon ? 'bg-slate-600' : 'bg-emerald-400'
-                              }`}
-                            />
-                            <span className="font-semibold text-slate-200 truncate">
-                              {app.name}
+                      {packApps.map((app) => {
+                        const isLicensed = isAppLicensed(app, userLicenses);
+                        return (
+                          <div
+                            key={app.id}
+                            className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800 text-xs"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                  app.comingSoon
+                                    ? 'bg-slate-600'
+                                    : isLicensed
+                                      ? 'bg-emerald-400'
+                                      : 'bg-indigo-400'
+                                }`}
+                              />
+                              <span className="font-semibold text-slate-200 truncate">
+                                {app.name}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-medium shrink-0">
+                              {app.comingSoon
+                                ? 'Coming Soon'
+                                : isLicensed
+                                  ? 'Licensed'
+                                  : app.priceLabel || 'Needs License'}
                             </span>
                           </div>
-                          <span className="text-[10px] text-slate-400 font-medium shrink-0">
-                            {app.comingSoon ? 'Coming Soon' : 'Installed'}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -141,7 +155,7 @@ export const PacksView: React.FC<PacksViewProps> = ({
         </div>
       </div>
 
-      {/* Future Product Packs (Scalability Architecture) */}
+      {/* Future Product Packs */}
       <div className="space-y-4 pt-4 border-t border-slate-800">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -220,6 +234,7 @@ export const PacksView: React.FC<PacksViewProps> = ({
                   <ApplicationCard
                     key={app.id}
                     app={app}
+                    userLicenses={userLicenses}
                     onOpenApp={(a) => {
                       setSelectedPackId(null);
                       onOpenApp(a);
@@ -227,6 +242,10 @@ export const PacksView: React.FC<PacksViewProps> = ({
                     onUpdateApp={(a) => {
                       setSelectedPackId(null);
                       onUpdateApp(a);
+                    }}
+                    onRequestLicense={(a) => {
+                      setSelectedPackId(null);
+                      onRequestLicense(a);
                     }}
                     updateResult={updateResult}
                     updateStatus={updateStatus}
