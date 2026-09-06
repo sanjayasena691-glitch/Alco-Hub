@@ -12,14 +12,16 @@ import React from 'react';
 import {
   ArrowRight,
   Sparkles,
-  Compass,
-  Play,
-  Layers,
   ChevronRight,
-  RotateCcw,
-  Sparkle,
 } from 'lucide-react';
-import { EcosystemApp, EcosystemPack, ContentEngineUpdateResult, ContentEngineUpdateStatus, NavigationTab } from '../types';
+import {
+  EcosystemApp,
+  EcosystemPack,
+  ContentEngineUpdateResult,
+  ContentEngineUpdateStatus,
+  NavigationTab,
+  UserLicense,
+} from '../types';
 import { ApplicationCard } from './ApplicationCard';
 import { PackCard } from './PackCard';
 import { AlcoNavigator } from './AlcoNavigator';
@@ -28,9 +30,11 @@ interface HomeViewProps {
   coreApps: EcosystemApp[];
   packs: EcosystemPack[];
   allApps: EcosystemApp[];
+  userLicenses: Record<string, UserLicense>;
   recentApp: EcosystemApp | undefined;
   onOpenApp: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
+  onRequestLicense: (app: EcosystemApp) => void;
   onExplorePack: (pack: EcosystemPack) => void;
   onNavigateTab: (tab: NavigationTab) => void;
   updateResult: ContentEngineUpdateResult | null;
@@ -43,9 +47,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
   coreApps,
   packs,
   allApps,
+  userLicenses,
   recentApp,
   onOpenApp,
   onUpdateApp,
+  onRequestLicense,
   onExplorePack,
   onNavigateTab,
   updateResult,
@@ -145,7 +151,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => onNavigateTab('apps')}
+            onClick={() => onNavigateTab('store')}
             className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1 transition-colors"
           >
             <span>View All Apps</span>
@@ -158,8 +164,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <ApplicationCard
               key={app.id}
               app={app}
+              userLicenses={userLicenses}
               onOpenApp={onOpenApp}
               onUpdateApp={onUpdateApp}
+              onRequestLicense={onRequestLicense}
               updateResult={updateResult}
               updateStatus={updateStatus}
             />

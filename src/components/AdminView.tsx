@@ -1,11 +1,6 @@
 /**
  * ALCO Hub - Owner / Admin Management Portal
- * Memberikan kendali penuh kepada Owner untuk:
- * 1. Mendaftarkan aplikasi baru & menerbitkannya ke katalog
- * 2. Mengubah status harga (Free / Licensed / Coming Soon)
- * 3. Menerbitkan versi update baru (Update Manager)
- * 4. Generate & Manajemen Lisensi Pengguna
- * 5. Pengaturan Nomor WhatsApp Resmi ALCO
+ * Centralized Catalog & Distribution Controller for Aladzan Corpora
  */
 
 import React, { useState } from 'react';
@@ -15,7 +10,17 @@ import {
   Trash2,
   Key,
   CheckCircle2,
-  RotateCcw,
+  Lock,
+  LogOut,
+  RefreshCw,
+  Globe,
+  Eye,
+  EyeOff,
+  Cloud,
+  FileCode,
+  Copy,
+  Check,
+  Sparkles,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -23,31 +28,57 @@ import {
   ProductAccent,
   ProductIconName,
   ContactAlcoConfig,
+  AdminAuthSession,
+  SyncMeta,
 } from '../types';
 import {
   generateLicenseKey,
-  saveCatalogApps,
-  resetCatalogToDefault,
+  saveAppToCloud,
+  deleteAppFromCloud,
+  togglePublishAppInCloud,
   saveContactConfig,
+  adminSignIn,
+  adminSignOut,
+  resetCatalogToDefault,
 } from '../services/storeService';
+import {
+  testSupabaseConnection,
+  saveCustomSupabaseConfig,
+  getSupabaseConfig,
+} from '../services/supabaseClient';
 import { ECOSYSTEM_PACKS } from '../config/ecosystemPacks';
 
 interface AdminViewProps {
   apps: EcosystemApp[];
   contactConfig: ContactAlcoConfig;
+  adminSession: AdminAuthSession;
+  syncMeta: SyncMeta;
+  onRefreshCatalog: () => void;
   onUpdateCatalog: (newApps: EcosystemApp[]) => void;
   onUpdateContactConfig: (newConfig: ContactAlcoConfig) => void;
+  onAdminAuthChange: (session: AdminAuthSession) => void;
 }
 
 export const AdminView: React.FC<AdminViewProps> = ({
   apps,
   contactConfig,
+  adminSession,
+  syncMeta,
+  onRefreshCatalog,
   onUpdateCatalog,
   onUpdateContactConfig,
+  onAdminAuthChange,
 }) => {
-  const [activeTab, setActiveTab] = useState<'apps' | 'licenses' | 'updates' | 'contact'>('apps');
+  // Navigation & Subtabs
+  const [activeTab, setActiveTab] = useState<'apps' | 'licenses' | 'updates' | 'contact' | 'supabase'>('apps');
   const [isEditing, setIsEditing] = useState(false);
   const [editingAppId, setEditingAppId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Login Form State
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
 
   // Form State for App Registration/Edit
   const [formAppId, setFormAppId] = useState('');
@@ -63,6 +94,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [formVersion, setFormVersion] = useState('1.0.0');
   const [formLatestVersion, setFormLatestVersion] = useState('1.0.0');
   const [formReleaseNotes, setFormReleaseNotes] = useState('');
+  const [formDownloadUrl, setFormDownloadUrl] = useState('');
+  const [formSha256, setFormSha256] = useState('');
+  const [formPublished, setFormPublished] = useState(true);
   const [formFeatures, setFormFeatures] = useState('');
 
   // License Generator State
@@ -74,19 +108,57 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [newVersionInput, setNewVersionInput] = useState('');
   const [updateReleaseNotes, setUpdateReleaseNotes] = useState('');
   const [updateDownloadUrl, setUpdateDownloadUrl] = useState('');
+  const [updateSha256, setUpdateSha256] = useState('');
 
   // Contact Form State
   const [waNumber, setWaNumber] = useState(contactConfig.whatsappNumber);
   const [supportEmail, setSupportEmail] = useState(contactConfig.supportEmail);
   const [companyName, setCompanyName] = useState(contactConfig.companyName);
+  const [defaultMsg, setDefaultMsg] = useState(contactConfig.defaultPurchaseMessage || '');
+
+  // Supabase Runtime Config State
+  const currentSupabase = getSupabaseConfig();
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState(currentSupabase.url);
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState(currentSupabase.anonKey);
+  const [connectionTestResult, setConnectionTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   const [notification, setNotification] = useState<string | null>(null);
 
   const showNotification = (msg: string) => {
     setNotification(msg);
-    setTimeout(() => setNotification(null), 3000);
+    setTimeout(() => setNotification(null), 3500);
   };
 
+  // --------------------------------------------------------------------------
+  // AUTH HANDLERS
+  // --------------------------------------------------------------------------
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    setIsSubmitting(true);
+
+    const res = await adminSignIn(loginEmail, loginPassword, loginPassword);
+    setIsSubmitting(false);
+
+    if (res.success) {
+      onAdminAuthChange(res.session);
+      showNotification(res.message);
+    } else {
+      setLoginError(res.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    await adminSignOut();
+    onAdminAuthChange({ isAuthenticated: false, email: null, role: 'guest', mode: 'none' });
+    showNotification('Anda telah keluar dari Owner Portal.');
+  };
+
+  // --------------------------------------------------------------------------
+  // APP MANAGEMENT HANDLERS
+  // --------------------------------------------------------------------------
   const handleOpenAddForm = () => {
     setIsEditing(true);
     setEditingAppId(null);
@@ -103,13 +175,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
     setFormVersion('1.0.0');
     setFormLatestVersion('1.0.0');
     setFormReleaseNotes('Initial release.');
+    setFormDownloadUrl('');
+    setFormSha256('');
+    setFormPublished(true);
     setFormFeatures('Feature 1\nFeature 2\nFeature 3');
   };
 
   const handleOpenEditForm = (app: EcosystemApp) => {
     setIsEditing(true);
     setEditingAppId(app.id);
-    setFormAppId(app.id);
+    setFormAppId(app.appId || app.id);
     setFormName(app.name);
     setFormShortName(app.shortName);
     setFormFunction(app.functionLabel);
@@ -122,23 +197,29 @@ export const AdminView: React.FC<AdminViewProps> = ({
     setFormVersion(app.version);
     setFormLatestVersion(app.latestVersion);
     setFormReleaseNotes(app.releaseNotes || '');
+    setFormDownloadUrl(app.downloadUrl || '');
+    setFormSha256(app.sha256 || '');
+    setFormPublished(app.published !== false);
     setFormFeatures((app.features || []).join('\n'));
   };
 
-  const handleSaveApp = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveApp = async (publishImmediate: boolean) => {
     if (!formName.trim() || !formAppId.trim()) {
-      alert('Nama dan App ID wajib diisi.');
+      alert('Nama Aplikasi dan App ID wajib diisi.');
       return;
     }
 
+    setIsSubmitting(true);
     const featureList = formFeatures
       .split('\n')
       .map((f) => f.trim())
       .filter(Boolean);
 
+    const isComingSoon = formPricingType === 'coming-soon';
+
     const newAppData: EcosystemApp = {
       id: formAppId.trim().toLowerCase(),
+      appId: formAppId.trim().toLowerCase(),
       name: formName.trim(),
       shortName: formShortName.trim() || formName.trim(),
       functionLabel: formFunction.trim() || 'General ALCO Application',
@@ -149,94 +230,243 @@ export const AdminView: React.FC<AdminViewProps> = ({
       pricingType: formPricingType,
       priceLabel: formPriceLabel.trim(),
       currency: 'IDR',
-      isPublished: true,
+      published: publishImmediate,
       publishedAt: new Date().toISOString().split('T')[0],
       version: formVersion.trim() || '1.0.0',
       latestVersion: formLatestVersion.trim() || '1.0.0',
       releaseNotes: formReleaseNotes.trim(),
-      launchMode: formPricingType === 'coming-soon' ? 'disabled' : 'desktop',
-      comingSoon: formPricingType === 'coming-soon',
+      downloadUrl: formDownloadUrl.trim() || undefined,
+      sha256: formSha256.trim() || undefined,
+      launchMode: isComingSoon ? 'disabled' : 'desktop',
+      comingSoon: isComingSoon,
+      status: isComingSoon ? 'coming-soon' : 'installed',
       features: featureList,
     };
 
-    let updatedList: EcosystemApp[];
-    if (editingAppId) {
-      updatedList = apps.map((a) => (a.id === editingAppId ? newAppData : a));
-    } else {
-      updatedList = [...apps, newAppData];
-    }
+    const res = await saveAppToCloud(newAppData, !editingAppId);
+    setIsSubmitting(false);
 
-    saveCatalogApps(updatedList);
-    onUpdateCatalog(updatedList);
-    setIsEditing(false);
-    showNotification(`Aplikasi "${newAppData.name}" berhasil disimpan dan diterbitkan ke katalog.`);
-  };
-
-  const handleDeleteApp = (appId: string) => {
-    if (window.confirm('Hapus aplikasi ini dari katalog ALCO Hub?')) {
-      const updatedList = apps.filter((a) => a.id !== appId);
-      saveCatalogApps(updatedList);
+    if (res.success) {
+      let updatedList: EcosystemApp[];
+      if (editingAppId) {
+        updatedList = apps.map((a) => (a.id === editingAppId ? newAppData : a));
+      } else {
+        const existingIdx = apps.findIndex((a) => a.id === newAppData.id);
+        if (existingIdx >= 0) {
+          updatedList = apps.map((a) => (a.id === newAppData.id ? newAppData : a));
+        } else {
+          updatedList = [...apps, newAppData];
+        }
+      }
       onUpdateCatalog(updatedList);
-      showNotification('Aplikasi berhasil dihapus dari katalog.');
+      setIsEditing(false);
+      showNotification(res.message);
+    } else {
+      showNotification(res.message);
     }
   };
 
+  const handleDeleteApp = async (appId: string) => {
+    if (window.confirm('Hapus aplikasi ini dari katalog ALCO Hub & Cloud Supabase?')) {
+      const res = await deleteAppFromCloud(appId);
+      if (res.success) {
+        const updatedList = apps.filter((a) => a.id !== appId);
+        onUpdateCatalog(updatedList);
+        showNotification(res.message);
+      } else {
+        showNotification(res.message);
+      }
+    }
+  };
+
+  const handleTogglePublish = async (app: EcosystemApp) => {
+    const nextPublished = !app.published;
+    const res = await togglePublishAppInCloud(app.id, nextPublished);
+    if (res.success) {
+      const updatedList = apps.map((a) => (a.id === app.id ? { ...a, published: nextPublished } : a));
+      onUpdateCatalog(updatedList);
+      showNotification(res.message);
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // LICENSE & UPDATE PUBLISHERS
+  // --------------------------------------------------------------------------
   const handleGenerateKey = () => {
     const key = generateLicenseKey(selectedAppForLicense);
     setGeneratedKeys([
       { appId: selectedAppForLicense, key, date: new Date().toLocaleTimeString() },
       ...generatedKeys,
     ]);
-    showNotification(`License key baru dibuat: ${key}`);
+    showNotification(`License key resmi dibuat: ${key}`);
   };
 
-  const handlePublishUpdate = (e: React.FormEvent) => {
+  const handlePublishUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newVersionInput.trim()) {
       alert('Masukkan nomor versi baru (contoh: 1.1.0)');
       return;
     }
 
-    const updatedList = apps.map((app) => {
-      if (app.id === selectedAppForUpdate) {
-        return {
-          ...app,
-          latestVersion: newVersionInput.trim(),
-          releaseNotes: updateReleaseNotes.trim() || app.releaseNotes,
-          downloadUrl: updateDownloadUrl.trim() || app.downloadUrl,
-        };
-      }
-      return app;
-    });
+    const targetApp = apps.find((a) => a.id === selectedAppForUpdate);
+    if (!targetApp) return;
 
-    saveCatalogApps(updatedList);
-    onUpdateCatalog(updatedList);
-    setNewVersionInput('');
-    setUpdateReleaseNotes('');
-    showNotification(`Versi baru v${newVersionInput} untuk ${selectedAppForUpdate} berhasil dipublish!`);
+    setIsSubmitting(true);
+    const updatedApp: EcosystemApp = {
+      ...targetApp,
+      latestVersion: newVersionInput.trim(),
+      releaseNotes: updateReleaseNotes.trim() || targetApp.releaseNotes,
+      downloadUrl: updateDownloadUrl.trim() || targetApp.downloadUrl,
+      sha256: updateSha256.trim() || targetApp.sha256,
+    };
+
+    const res = await saveAppToCloud(updatedApp, false);
+    setIsSubmitting(false);
+
+    if (res.success) {
+      const updatedList = apps.map((a) => (a.id === selectedAppForUpdate ? updatedApp : a));
+      onUpdateCatalog(updatedList);
+      setNewVersionInput('');
+      setUpdateReleaseNotes('');
+      setUpdateDownloadUrl('');
+      setUpdateSha256('');
+      showNotification(`Versi baru v${updatedApp.latestVersion} untuk "${updatedApp.name}" berhasil dipublish ke Supabase!`);
+    }
   };
 
-  const handleSaveContact = (e: React.FormEvent) => {
+  const handleSaveContact = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
     const updated: ContactAlcoConfig = {
       whatsappNumber: waNumber.trim(),
       supportEmail: supportEmail.trim(),
       companyName: companyName.trim(),
       ownerName: contactConfig.ownerName,
+      defaultPurchaseMessage: defaultMsg.trim(),
     };
-    saveContactConfig(updated);
+    const res = await saveContactConfig(updated);
+    setIsSubmitting(false);
     onUpdateContactConfig(updated);
-    showNotification('Konfigurasi kontak resmi ALCO berhasil diperbarui.');
+    showNotification(res.message);
   };
 
-  const handleResetCatalog = () => {
-    if (window.confirm('Reset seluruh katalog aplikasi ke setelan bawaan?')) {
-      const defaults = resetCatalogToDefault();
-      onUpdateCatalog(defaults);
-      showNotification('Katalog direset ke default.');
-    }
+  const handleSaveSupabaseConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveCustomSupabaseConfig(supabaseUrlInput, supabaseKeyInput);
+    showNotification('Konfigurasi Supabase berhasil disimpan.');
   };
 
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    setConnectionTestResult(null);
+    const result = await testSupabaseConnection();
+    setIsTestingConnection(false);
+    setConnectionTestResult(result);
+  };
+
+  const copySqlSchema = () => {
+    const sql = `-- Eksekusi di Supabase SQL Editor:
+CREATE TABLE IF NOT EXISTS public.apps (
+    id TEXT PRIMARY KEY,
+    app_id TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    short_name TEXT NOT NULL,
+    description TEXT,
+    function_label TEXT,
+    pack_id TEXT DEFAULT 'core-system',
+    pricing_type TEXT NOT NULL DEFAULT 'licensed',
+    price_label TEXT,
+    status TEXT DEFAULT 'installed',
+    coming_soon BOOLEAN DEFAULT FALSE,
+    published BOOLEAN DEFAULT TRUE,
+    latest_version TEXT DEFAULT '1.0.0',
+    release_notes TEXT,
+    download_url TEXT,
+    sha256 TEXT,
+    accent TEXT DEFAULT 'purple',
+    icon_name TEXT DEFAULT 'target',
+    features JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.apps ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public users can view published apps" ON public.apps FOR SELECT TO anon, authenticated USING (published = true);
+CREATE POLICY "Authenticated admins have full access" ON public.apps FOR ALL TO authenticated USING (true);`;
+    navigator.clipboard.writeText(sql);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 2000);
+  };
+
+  // ==========================================================================
+  // VIEW: IF NOT AUTHENTICATED -> SHOW ADMIN LOGIN SCREEN
+  // ==========================================================================
+  if (!adminSession.isAuthenticated) {
+    return (
+      <div id="admin-login-guard" className="max-w-md mx-auto py-12 space-y-6">
+        <div className="text-center space-y-2">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-inner">
+            <Lock className="w-6 h-6" />
+          </div>
+          <h1 className="text-2xl font-extrabold text-white tracking-tight">Owner Portal</h1>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Pusat kendali katalog terpusat Aladzan Corpora. Masuk untuk mendaftarkan aplikasi, mengubah harga, dan menerbitkan update.
+          </p>
+        </div>
+
+        <form onSubmit={handleLogin} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-slate-300">Email Owner / Admin</label>
+            <input
+              type="email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              placeholder="owner@aladzancorpora.com"
+              className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:border-amber-500 outline-none"
+              required
+            />
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-300">Password / Passcode</label>
+              <span className="text-[10px] text-slate-500">Dev Passcode: alco2026</span>
+            </div>
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              placeholder="••••••••"
+              className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:border-amber-500 outline-none"
+              required
+            />
+          </div>
+
+          {loginError && (
+            <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
+              {loginError}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all shadow-md active:scale-[0.99] disabled:opacity-50"
+          >
+            {isSubmitting ? 'Memverifikasi...' : 'Masuk ke Owner Portal'}
+          </button>
+        </form>
+
+        <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800/80 text-center text-[11px] text-slate-400">
+          <p>User biasa tidak dapat mengakses atau memodifikasi katalog aplikasi.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================================================
+  // VIEW: AUTHENTICATED ADMIN DASHBOARD
+  // ==========================================================================
   return (
     <div id="alco-admin-view" className="space-y-8 max-w-6xl">
       {/* Header */}
@@ -246,23 +476,45 @@ export const AdminView: React.FC<AdminViewProps> = ({
             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20 uppercase">
               Owner Control Center
             </span>
+            <span className="text-xs text-slate-400 font-mono">
+              ({adminSession.email || 'Owner Authenticated'})
+            </span>
           </div>
           <h1 className="text-2xl font-extrabold text-white tracking-tight mt-1">
-            Private App Store & License Management
+            Centralized App Store & Distribution Center
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Daftarkan aplikasi baru, tentukan model lisensi, terbitkan update, dan buat lisensi resmi untuk user.
+            Daftarkan aplikasi baru, tentukan model lisensi, kelola rilis GitHub, dan pantau sinkronisasi Supabase.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleOpenAddForm}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Daftarkan Aplikasi Baru</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onRefreshCatalog}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+            title="Sinkronisasi Ulang Supabase"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncMeta.status === 'syncing' ? 'animate-spin' : ''}`} />
+            <span>Sync Cloud</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenAddForm}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tambah Aplikasi</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 transition-colors"
+            title="Keluar dari Owner Portal"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {notification && (
@@ -278,16 +530,16 @@ export const AdminView: React.FC<AdminViewProps> = ({
           type="button"
           onClick={() => { setActiveTab('apps'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'apps' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
+            activeTab === 'apps' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
           }`}
         >
-          App Management ({apps.length})
+          Katalog & Drafts ({apps.length})
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('licenses'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'licenses' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
+            activeTab === 'licenses' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
           }`}
         >
           License Generator
@@ -296,19 +548,28 @@ export const AdminView: React.FC<AdminViewProps> = ({
           type="button"
           onClick={() => { setActiveTab('updates'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'updates' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
+            activeTab === 'updates' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
           }`}
         >
-          Update Publisher
+          Update & GitHub Publisher
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('contact'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'contact' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
+            activeTab === 'contact' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
           }`}
         >
-          Contact / WhatsApp Config
+          Kontak Resmi ALCO
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab('supabase'); setIsEditing(false); }}
+          className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
+            activeTab === 'supabase' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          Supabase & SQL
         </button>
       </div>
 
@@ -316,12 +577,17 @@ export const AdminView: React.FC<AdminViewProps> = ({
       {activeTab === 'apps' && (
         <div className="space-y-6">
           {isEditing ? (
-            /* App Add/Edit Form */
-            <form onSubmit={handleSaveApp} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
+            /* Form Add / Edit App */
+            <form onSubmit={(e) => { e.preventDefault(); handleSaveApp(formPublished); }} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
               <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                <h3 className="text-base font-bold text-white">
-                  {editingAppId ? 'Edit Metadata Aplikasi' : 'Daftarkan Aplikasi Baru'}
-                </h3>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    {editingAppId ? 'Edit Metadata Aplikasi' : 'Daftarkan Aplikasi Baru'}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Aplikasi yang disimpan dengan status Diterbitkan otomatis muncul di Store seluruh user.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setIsEditing(false)}
@@ -333,7 +599,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-300">App ID (Unik)</label>
+                  <label className="text-xs font-semibold text-slate-300">App ID / Slug (Unik)</label>
                   <input
                     type="text"
                     value={formAppId}
@@ -358,7 +624,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-300">Nama Singkat (Tombol)</label>
+                  <label className="text-xs font-semibold text-slate-300">Nama Singkat (Tombol / Badge)</label>
                   <input
                     type="text"
                     value={formShortName}
@@ -390,7 +656,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     {ECOSYSTEM_PACKS.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
-                    <option value="custom-pack">Custom / Standalone Pack</option>
+                    <option value="custom-pack">Custom / Standalone Suite</option>
                   </select>
                 </div>
 
@@ -429,9 +695,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <option value="purple">Purple (Creative)</option>
                       <option value="cyan">Cyan (Content)</option>
                       <option value="orange">Orange (Motion)</option>
+                      <option value="rose">Rose (Product/Offer)</option>
                       <option value="emerald">Emerald (Ads/Growth)</option>
                       <option value="indigo">Indigo (Intelligence)</option>
-                      <option value="rose">Rose (Special)</option>
+                      <option value="teal">Teal (Landing Page)</option>
                     </select>
                     <select
                       value={formIcon}
@@ -441,12 +708,46 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <option value="target">Target</option>
                       <option value="sparkles">Sparkles</option>
                       <option value="video">Video</option>
+                      <option value="package">Package</option>
                       <option value="trending-up">Trending Up</option>
                       <option value="layout">Layout</option>
                       <option value="search">Search</option>
                       <option value="shield">Shield</option>
                     </select>
                   </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">Versi Terbaru (Latest Version)</label>
+                  <input
+                    type="text"
+                    value={formLatestVersion}
+                    onChange={(e) => setFormLatestVersion(e.target.value)}
+                    placeholder="1.0.0"
+                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-300">GitHub Releases Download URL</label>
+                  <input
+                    type="url"
+                    value={formDownloadUrl}
+                    onChange={(e) => setFormDownloadUrl(e.target.value)}
+                    placeholder="https://github.com/Alco-Releases/alco-app/releases/download/v1.0.0/app.exe"
+                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="text-xs font-semibold text-slate-300">SHA-256 Checksum Hash (GitHub Binary Integrity)</label>
+                  <input
+                    type="text"
+                    value={formSha256}
+                    onChange={(e) => setFormSha256(e.target.value)}
+                    placeholder="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                  />
                 </div>
               </div>
 
@@ -455,9 +756,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <textarea
                   value={formDesc}
                   onChange={(e) => setFormDesc(e.target.value)}
-                  rows={3}
+                  rows={2}
                   className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
                   placeholder="Jelaskan nilai utama dan manfaat aplikasi untuk bisnis user..."
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Catatan Rilis (Release Notes)</label>
+                <textarea
+                  value={formReleaseNotes}
+                  onChange={(e) => setFormReleaseNotes(e.target.value)}
+                  rows={2}
+                  className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
+                  placeholder="Ringkasan fitur rilis versi ini..."
                 />
               </div>
 
@@ -472,34 +784,69 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="px-4 py-2 text-xs text-slate-400 hover:text-white"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
-                >
-                  {editingAppId ? 'Simpan Perubahan' : 'Terbitkan ke Katalog'}
-                </button>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-800">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="published-toggle"
+                    checked={formPublished}
+                    onChange={(e) => setFormPublished(e.target.checked)}
+                    className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <label htmlFor="published-toggle" className="text-xs text-slate-300 font-medium cursor-pointer">
+                    Langsung Terbitkan ke User (Published)
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(false)}
+                    className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => handleSaveApp(false)}
+                    className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold"
+                  >
+                    Simpan Draft
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => handleSaveApp(true)}
+                    className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md"
+                  >
+                    {editingAppId ? 'Simpan & Publish' : 'Terbitkan ke Katalog'}
+                  </button>
+                </div>
               </div>
             </form>
           ) : (
             /* App Table */
             <div className="rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden">
               <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">Daftar Aplikasi yang Diterbitkan ({apps.length})</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white">Daftar Aplikasi Katalog Terpusat ({apps.length})</h3>
+                  <span className="text-xs text-slate-400">
+                    • {apps.filter((a) => a.published).length} Published, {apps.filter((a) => !a.published).length} Draft
+                  </span>
+                </div>
                 <button
                   type="button"
-                  onClick={handleResetCatalog}
-                  className="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-1"
+                  onClick={() => {
+                    if (window.confirm('Reset katalog ke 7 aplikasi default Aladzan Corpora?')) {
+                      const d = resetCatalogToDefault();
+                      onUpdateCatalog(d);
+                      showNotification('Katalog direset ke default.');
+                    }
+                  }}
+                  className="text-xs text-slate-400 hover:text-slate-200"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Reset Katalog</span>
+                  Reset Default
                 </button>
               </div>
 
@@ -507,9 +854,23 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 {apps.map((app) => (
                   <div key={app.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
                     <div className="space-y-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-white text-sm truncate">{app.name}</span>
-                        <span className="font-mono text-[11px] text-slate-400">({app.id})</span>
+                        <span className="font-mono text-[11px] text-slate-400">({app.appId || app.id})</span>
+                        
+                        {/* Publish status */}
+                        {app.published ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 inline-flex items-center gap-1">
+                            <Eye className="w-3 h-3" />
+                            <span>PUBLISHED</span>
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20 inline-flex items-center gap-1">
+                            <EyeOff className="w-3 h-3" />
+                            <span>DRAFT</span>
+                          </span>
+                        )}
+
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                           app.pricingType === 'free'
                             ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
@@ -522,11 +883,25 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       </div>
                       <p className="text-slate-400 text-[11px] truncate">{app.functionLabel}</p>
                       <p className="text-slate-500 text-[11px]">
-                        Versi: v{app.version} • Harga: {app.priceLabel || 'Free'}
+                        Versi: v{app.latestVersion} • Harga: {app.priceLabel || 'Free'} • Pack: {app.packId}
                       </p>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePublish(app)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
+                          app.published
+                            ? 'bg-slate-800 hover:bg-slate-700 text-amber-300'
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
+                        title={app.published ? 'Sembunyikan dari user (Jadikan Draft)' : 'Terbitkan ke Store user'}
+                      >
+                        {app.published ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        <span>{app.published ? 'Unpublish' : 'Publish'}</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleOpenEditForm(app)}
@@ -613,13 +988,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </div>
       )}
 
-      {/* TAB 3: UPDATE PUBLISHER */}
+      {/* TAB 3: UPDATE & GITHUB RELEASES PUBLISHER */}
       {activeTab === 'updates' && (
         <form onSubmit={handlePublishUpdate} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
           <div className="space-y-1">
-            <h3 className="text-base font-bold text-white">Terbitkan Versi Baru (Update Publisher)</h3>
+            <h3 className="text-base font-bold text-white">Terbitkan Versi Baru & GitHub Releases</h3>
             <p className="text-xs text-slate-400">
-              Ubah versi terbaru aplikasi. User yang menggunakan aplikasi dengan versi lebih lama akan otomatis menerima status "Update Available".
+              Ubah versi terbaru aplikasi. User yang menggunakan aplikasi dengan versi lebih lama akan otomatis menerima status "Update Available" beserta link installer GitHub.
             </p>
           </div>
 
@@ -640,7 +1015,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Nomor Versi Terbaru Baru</label>
+              <label className="text-xs font-semibold text-slate-300">Nomor Versi Baru</label>
               <input
                 type="text"
                 value={newVersionInput}
@@ -648,6 +1023,28 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 placeholder="contoh: 1.1.0"
                 className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
                 required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">URL Unduhan GitHub Releases (.exe / .zip)</label>
+              <input
+                type="url"
+                value={updateDownloadUrl}
+                onChange={(e) => setUpdateDownloadUrl(e.target.value)}
+                placeholder="https://github.com/Alco-Releases/alco-app/releases/download/v1.1.0/installer.exe"
+                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">SHA-256 Checksum Hash</label>
+              <input
+                type="text"
+                value={updateSha256}
+                onChange={(e) => setUpdateSha256(e.target.value)}
+                placeholder="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
               />
             </div>
           </div>
@@ -663,29 +1060,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
             />
           </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-300">URL Unduhan Binary / ZIP (Opsional)</label>
-            <input
-              type="url"
-              value={updateDownloadUrl}
-              onChange={(e) => setUpdateDownloadUrl(e.target.value)}
-              placeholder="https://github.com/Alco-Releases/alco-app/releases/download/v1.1.0/installer.zip"
-              className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
-            />
-          </div>
-
           <div className="pt-2">
             <button
               type="submit"
-              className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold tracking-tight shadow-md"
+              disabled={isSubmitting}
+              className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold tracking-tight shadow-md disabled:opacity-50"
             >
-              Publish Update ke Seluruh User
+              {isSubmitting ? 'Memproses...' : 'Publish Update ke Supabase Cloud'}
             </button>
           </div>
         </form>
       )}
 
-      {/* TAB 4: CONTACT & WHATSAPP CONFIG */}
+      {/* TAB 4: CONTACT CONFIG */}
       {activeTab === 'contact' && (
         <form onSubmit={handleSaveContact} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
           <div className="space-y-1">
@@ -719,7 +1106,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
               />
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1 sm:col-span-2">
               <label className="text-xs font-semibold text-slate-300">Nama Perusahaan / Brand</label>
               <input
                 type="text"
@@ -729,17 +1116,152 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
               />
             </div>
+
+            <div className="space-y-1 sm:col-span-2">
+              <label className="text-xs font-semibold text-slate-300">Pesan Default Pembelian Lisensi</label>
+              <textarea
+                value={defaultMsg}
+                onChange={(e) => setDefaultMsg(e.target.value)}
+                rows={2}
+                placeholder="Halo Aladzan Corpora, saya ingin membeli lisensi resmi..."
+                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
+              />
+            </div>
           </div>
 
           <div className="pt-2">
             <button
               type="submit"
-              className="px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold tracking-tight shadow-md"
+              disabled={isSubmitting}
+              className="px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold tracking-tight shadow-md disabled:opacity-50"
             >
               Simpan Konfigurasi Kontak
             </button>
           </div>
         </form>
+      )}
+
+      {/* TAB 5: SUPABASE & SQL SETUP HELPER */}
+      {activeTab === 'supabase' && (
+        <div className="space-y-6">
+          <form onSubmit={handleSaveSupabaseConfig} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+            <div className="flex items-center gap-2">
+              <Cloud className="w-5 h-5 text-indigo-400" />
+              <h3 className="text-base font-bold text-white">Konfigurasi Supabase Project</h3>
+            </div>
+            <p className="text-xs text-slate-400">
+              Masukkan Supabase Project URL dan Anon Key untuk menghubungkan ALCO Hub ke Database Cloud resmi.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Supabase Project URL</label>
+                <input
+                  type="url"
+                  value={supabaseUrlInput}
+                  onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                  placeholder="https://your-project.supabase.co"
+                  className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-300">Supabase Anon / Public Key</label>
+                <input
+                  type="password"
+                  value={supabaseKeyInput}
+                  onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md"
+              >
+                Simpan Konfigurasi
+              </button>
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={isTestingConnection}
+                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold inline-flex items-center gap-1.5"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingConnection ? 'animate-spin' : ''}`} />
+                <span>Test Koneksi</span>
+              </button>
+            </div>
+
+            {connectionTestResult && (
+              <div className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+                connectionTestResult.success
+                  ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-300'
+                  : 'bg-rose-500/10 border border-rose-500/20 text-rose-300'
+              }`}>
+                {connectionTestResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <Lock className="w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span>{connectionTestResult.message}</span>
+              </div>
+            )}
+          </form>
+
+          {/* SQL Schema helper */}
+          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-amber-400" />
+                <h3 className="text-sm font-bold text-white">Supabase SQL Schema & Row Level Security (RLS)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={copySqlSchema}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold"
+              >
+                {copiedSql ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedSql ? 'Tersalin!' : 'Salin SQL'}</span>
+              </button>
+            </div>
+            <p className="text-xs text-slate-400">
+              Eksekusi skrip ini di <strong>Supabase Dashboard &gt; SQL Editor</strong> untuk membuat tabel <code className="text-amber-300">apps</code> dan <code className="text-amber-300">alco_config</code> dengan policy RLS yang aman.
+            </p>
+            <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-64">
+{`-- Skrip Schema Supabase ALCO Hub
+CREATE TABLE IF NOT EXISTS public.apps (
+    id TEXT PRIMARY KEY,
+    app_id TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    short_name TEXT NOT NULL,
+    description TEXT,
+    function_label TEXT,
+    pack_id TEXT DEFAULT 'core-system',
+    pricing_type TEXT NOT NULL DEFAULT 'licensed' CHECK (pricing_type IN ('free', 'licensed', 'coming-soon')),
+    price_label TEXT,
+    status TEXT DEFAULT 'installed',
+    coming_soon BOOLEAN DEFAULT FALSE,
+    published BOOLEAN DEFAULT TRUE,
+    latest_version TEXT DEFAULT '1.0.0',
+    release_notes TEXT,
+    download_url TEXT,
+    sha256 TEXT,
+    accent TEXT DEFAULT 'purple',
+    icon_name TEXT DEFAULT 'target',
+    features JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.apps ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public users can view published apps" ON public.apps FOR SELECT TO anon, authenticated USING (published = true);
+CREATE POLICY "Authenticated admins have full access" ON public.apps FOR ALL TO authenticated USING (true);`}
+            </pre>
+          </div>
+        </div>
       )}
     </div>
   );

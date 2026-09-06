@@ -11,19 +11,22 @@ import {
   ContentEngineUpdateStatus,
   ContentEngineUpdateResult,
   EcosystemApp,
-  EcosystemPack,
   UserLicense,
   ContactAlcoConfig,
+  SyncMeta,
+  AdminAuthSession,
 } from './types';
 import { HUB_META } from './config/ecosystemApps';
 import { ECOSYSTEM_PACKS } from './config/ecosystemPacks';
 import { getUserApiKey } from './services/aiNavigatorService';
 import {
-  getCatalogApps,
-  saveCatalogApps,
+  getCachedApps,
+  saveCatalogToCache,
+  syncCatalogWithSupabase,
+  getSyncMeta,
+  getAdminSession,
   getUserLicenses,
   getContactConfig,
-  saveContactConfig,
   isAppLicensed,
 } from './services/storeService';
 
@@ -44,37 +47,49 @@ export default function App() {
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
 
   // Store & Licensing States
-  const [apps, setApps] = useState<EcosystemApp[]>([]);
-  const [userLicenses, setUserLicenses] = useState<Record<string, UserLicense>>({});
+  const [apps, setApps] = useState<EcosystemApp[]>(getCachedApps());
+  const [userLicenses, setUserLicenses] = useState<Record<string, UserLicense>>(getUserLicenses());
   const [contactConfig, setContactConfig] = useState<ContactAlcoConfig>(getContactConfig());
+  const [syncMeta, setSyncMeta] = useState<SyncMeta>(getSyncMeta());
+  const [adminSession, setAdminSession] = useState<AdminAuthSession>(getAdminSession());
   const [selectedAppForLicense, setSelectedAppForLicense] = useState<EcosystemApp | null>(null);
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
 
   // Update Checker States
   const [contentEngineUpdate, setContentEngineUpdate] = useState<ContentEngineUpdateResult | null>(null);
   const [contentEngineUpdateStatus, setContentEngineUpdateStatus] = useState<ContentEngineUpdateStatus>('checking');
-  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
 
-  // Load Initial Catalog & User Licenses
+  // 1. Initial Load: Load local cache immediately, then perform background Supabase catalog sync
   useEffect(() => {
-    const loadedApps = getCatalogApps();
-    setApps(loadedApps);
+    // Read local states
+    setApps(getCachedApps());
     setUserLicenses(getUserLicenses());
     setContactConfig(getContactConfig());
-    const key = getUserApiKey();
-    setApiKey(key);
+    setSyncMeta(getSyncMeta());
+    setAdminSession(getAdminSession());
+    setApiKey(getUserApiKey());
+
+    // Background sync catalog with Supabase
+    handleCatalogSync(false);
   }, []);
 
-  // Check update on initial load
+  // 2. Check local binary updates on initial load
   useEffect(() => {
     checkUpdates();
   }, []);
 
+  const handleCatalogSync = async (force: boolean = false) => {
+    const res = await syncCatalogWithSupabase({
+      force,
+      isAdmin: adminSession.isAuthenticated,
+    });
+    setApps(res.apps);
+    setSyncMeta(res.syncMeta);
+  };
+
   const checkUpdates = () => {
-    setIsCheckingUpdate(true);
     if (!window.alcoHub?.checkContentEngineUpdate) {
       setContentEngineUpdateStatus('unable-to-check');
-      setIsCheckingUpdate(false);
       return;
     }
 
@@ -87,9 +102,6 @@ export default function App() {
       .catch((err) => {
         console.warn('Update check failed:', err);
         setContentEngineUpdateStatus('unable-to-check');
-      })
-      .finally(() => {
-        setIsCheckingUpdate(false);
       });
   };
 
@@ -157,7 +169,7 @@ export default function App() {
       return a;
     });
 
-    saveCatalogApps(updatedApps);
+    saveCatalogToCache(updatedApps);
     setApps(updatedApps);
   };
 
@@ -207,9 +219,11 @@ export default function App() {
             apps={apps}
             packs={ECOSYSTEM_PACKS}
             userLicenses={userLicenses}
+            syncMeta={syncMeta}
             onOpenApp={handleOpenApp}
             onUpdateApp={handlePerformUpdate}
             onRequestLicense={handleRequestLicense}
+            onSyncCatalog={() => handleCatalogSync(true)}
             updateResult={contentEngineUpdate}
             updateStatus={contentEngineUpdateStatus}
           />
@@ -256,8 +270,15 @@ export default function App() {
           <AdminView
             apps={apps}
             contactConfig={contactConfig}
+            adminSession={adminSession}
+            syncMeta={syncMeta}
+            onRefreshCatalog={() => handleCatalogSync(true)}
             onUpdateCatalog={(newApps) => setApps(newApps)}
             onUpdateContactConfig={(newCfg) => setContactConfig(newCfg)}
+            onAdminAuthChange={(session) => {
+              setAdminSession(session);
+              handleCatalogSync(true);
+            }}
           />
         )}
 

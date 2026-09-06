@@ -1,6 +1,6 @@
 /**
  * ALCO Hub - Global TypeScript Types & Interfaces
- * Ekosistem Aladzan Corpora (Private App Store & Distribution Center)
+ * Ekosistem Aladzan Corpora (Private App Store & Centralized Catalog)
  */
 
 export type NavigationTab = 'home' | 'store' | 'library' | 'packs' | 'updates' | 'admin' | 'settings';
@@ -41,7 +41,8 @@ export type ProductIconName =
   | 'shield';
 
 export interface EcosystemApp {
-  id: string;
+  id: string; // Database PK or slug
+  appId?: string; // Standard ALCO App ID slug (e.g. 'creative-system')
   name: string;
   shortName: string;
   functionLabel: string;
@@ -54,14 +55,15 @@ export interface EcosystemApp {
   pricingType: PricingType;
   priceLabel?: string;
   currency?: string;
-  isPublished?: boolean;
+  published: boolean; // Source of truth: true = visible to public users, false = draft (admin only)
   publishedAt?: string;
   
-  // Versions
-  version: string;
-  latestVersion: string;
+  // Versions & Binary Artifacts (GitHub Releases)
+  version: string; // Installed / baseline version
+  latestVersion: string; // Latest published version
   releaseNotes?: string;
-  downloadUrl?: string;
+  downloadUrl?: string; // Link to GitHub Releases asset
+  sha256?: string; // SHA-256 binary hash for integrity check
   
   // Runtime & Gating
   status?: AppStatus;
@@ -71,6 +73,8 @@ export interface EcosystemApp {
   features?: string[];
   lastOpenedText?: string;
   requiredLicenseAppId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface UserLicense {
@@ -116,6 +120,25 @@ export interface ContactAlcoConfig {
   supportEmail: string;
   companyName: string;
   ownerName: string;
+  defaultPurchaseMessage?: string;
+}
+
+export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'cached' | 'offline' | 'unconfigured' | 'error';
+
+export interface SyncMeta {
+  status: SyncStatus;
+  lastSyncedAt: string | null;
+  source: 'supabase' | 'cache' | 'default';
+  message?: string;
+  error?: string;
+}
+
+export interface AdminAuthSession {
+  isAuthenticated: boolean;
+  email: string | null;
+  role: 'admin' | 'guest';
+  token?: string | null;
+  mode: 'supabase-auth' | 'preview-admin' | 'none';
 }
 
 declare global {

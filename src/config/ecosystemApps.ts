@@ -1,19 +1,20 @@
 /**
- * ALCO Hub - Centralized Ecosystem Applications Configuration
- * Mengelola semua daftar aplikasi, deskripsi fungsi, pack association, icon, aksen, pricing, dan status.
+ * ALCO Hub - Centralized Ecosystem Applications Configuration (Baseline / Seed Catalog)
+ * Berisi 7 aplikasi resmi ekosistem Aladzan Corpora dengan data lengkap.
  */
 
 import { EcosystemApp } from '../types';
 
 export const ECOSYSTEM_APPS: EcosystemApp[] = [
   // ==========================================
-  // 1. CORE SYSTEM APPS
+  // 1. CORE SYSTEM SUITE
   // ==========================================
   {
     id: 'creative-system',
+    appId: 'creative-system',
     name: 'ALCO Creative System',
     shortName: 'Creative System',
-    functionLabel: 'Strategy, Research & Product Development',
+    functionLabel: 'Strategy, Research & Creative Angle Formulation',
     description: 'Temukan ide penawaran, validasi target audiens, dan susun fondasi pesan campaign iklan yang terstruktur.',
     packId: 'core-system',
     accent: 'purple',
@@ -21,11 +22,13 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
     pricingType: 'licensed',
     priceLabel: 'Rp 499.000 / Lifetime',
     currency: 'IDR',
-    isPublished: true,
+    published: true,
     publishedAt: '2026-08-15',
     version: '1.0.0',
     latestVersion: '1.0.0',
-    releaseNotes: 'Initial production release with audience angle matrix & offer blueprint.',
+    releaseNotes: 'Initial production release: Market research matrix, buyer angle formulation, and value proposition canvas.',
+    downloadUrl: 'https://github.com/Alco-Releases/alco-creative-system/releases/download/v1.0.0/ALCO.Creative.System-1.0.0-win.exe',
+    sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     launchMode: 'desktop',
     features: [
       'Offer Positioning & Angle Strategy',
@@ -36,9 +39,10 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
   },
   {
     id: 'content-engine',
+    appId: 'content-engine',
     name: 'ALCO Content Engine',
     shortName: 'Content Engine',
-    functionLabel: 'Content Planning & Production',
+    functionLabel: 'Content Planning & Multi-Format Production',
     description: 'Ubah positioning dan strategi menjadi kalender konten organik, caption siap posting, brief kreatif, dan aset terorganisir.',
     packId: 'core-system',
     accent: 'cyan',
@@ -46,12 +50,13 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
     pricingType: 'licensed',
     priceLabel: 'Rp 399.000 / Lifetime',
     currency: 'IDR',
-    isPublished: true,
+    published: true,
     publishedAt: '2026-08-20',
     version: '0.1.0',
     latestVersion: '0.1.1',
     releaseNotes: 'Update v0.1.1: Pembaruan hook generator, sinkronisasi kalender konten, dan perbaikan format ekspor caption.',
     downloadUrl: 'https://github.com/Alco-Releases/alco-content-engine/releases/download/v0.1.1/ALCO.Content.Engine-0.1.1-win.zip',
+    sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
     launchMode: 'desktop',
     lastOpenedText: 'Last opened recently',
     features: [
@@ -63,9 +68,10 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
   },
   {
     id: 'auto-motion',
+    appId: 'auto-motion',
     name: 'ALCO Auto Motion',
     shortName: 'Auto Motion',
-    functionLabel: 'Video Production & Editing',
+    functionLabel: 'Video Motion Architecture & Kinetic Editing',
     description: 'Analisis footage mentah, buat rencana editing terstruktur, dan siapkan video motion dinamis untuk media sosial.',
     packId: 'core-system',
     accent: 'orange',
@@ -73,11 +79,13 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
     pricingType: 'licensed',
     priceLabel: 'Rp 599.000 / Lifetime',
     currency: 'IDR',
-    isPublished: true,
+    published: true,
     publishedAt: '2026-08-25',
     version: '1.0.0',
     latestVersion: '1.0.0',
     releaseNotes: 'Full release: Kinetic typography engine & short-form video pacing presets.',
+    downloadUrl: 'https://github.com/Alco-Releases/alco-auto-motion/releases/download/v1.0.0/ALCO.Auto.Motion-1.0.0-win.exe',
+    sha256: '5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8',
     launchMode: 'desktop',
     features: [
       'Short-Form Video Motion Architect',
@@ -86,15 +94,44 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
       'Direct Timeline Render Export',
     ],
   },
+  {
+    id: 'product-forge',
+    appId: 'product-forge',
+    name: 'ALCO Product Forge',
+    shortName: 'Product Forge',
+    functionLabel: 'Strategic Product Formulation & Offer Creation',
+    description: 'Bangun arsitektur produk bernilai tinggi, struktur tiering penawaran, bonus stack irresistibel, dan kalkulator margin profit.',
+    packId: 'core-system',
+    accent: 'rose',
+    iconName: 'package',
+    pricingType: 'licensed',
+    priceLabel: 'Rp 699.000 / Lifetime',
+    currency: 'IDR',
+    published: true,
+    publishedAt: '2026-08-28',
+    version: '1.0.0',
+    latestVersion: '1.0.0',
+    releaseNotes: 'V1 Launch: Irresistible offer architect, pricing strategy simulator, and packaging engine.',
+    downloadUrl: 'https://github.com/Alco-Releases/alco-product-forge/releases/download/v1.0.0/ALCO.Product.Forge-1.0.0-win.exe',
+    sha256: '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a',
+    launchMode: 'desktop',
+    features: [
+      'Value Stack & Irresistible Offer Builder',
+      'Tiering & Margin Optimization Simulator',
+      'Product Delivery Checklist Generator',
+      'High-Ticket Offer Packaging Blueprint',
+    ],
+  },
 
   // ==========================================
   // 2. META ADS STARTER PACK APPS
   // ==========================================
   {
     id: 'meta-ads-analyst',
+    appId: 'meta-ads-analyst',
     name: 'ALCO Meta Ads Analyst',
     shortName: 'Meta Ads Analyst',
-    functionLabel: 'AI-powered Meta Ads performance analysis',
+    functionLabel: 'AI-powered Meta Ads Diagnostics & Audit',
     description: 'Evaluasi metrik campaign Ads Manager secara otomatis, deteksi kebocoran budget, dan dapatkan rekomendasi optimasi scaling.',
     packId: 'meta-ads-starter',
     accent: 'emerald',
@@ -102,11 +139,13 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
     pricingType: 'free',
     priceLabel: 'FREE (Starter Tool)',
     currency: 'IDR',
-    isPublished: true,
+    published: true,
     publishedAt: '2026-09-01',
     version: '1.0.0',
     latestVersion: '1.0.0',
-    releaseNotes: 'Free tier tool included in Meta Ads Starter Pack.',
+    releaseNotes: 'Free tier diagnostics tool included in Meta Ads Starter Pack.',
+    downloadUrl: 'https://github.com/Alco-Releases/alco-meta-ads-analyst/releases/download/v1.0.0/ALCO.Meta.Ads.Analyst-1.0.0-win.exe',
+    sha256: 'ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d',
     launchMode: 'desktop',
     features: [
       'CPA, ROAS & CTR Performance Diagnostics',
@@ -116,9 +155,10 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
   },
   {
     id: 'landing-page-analyst',
+    appId: 'landing-page-analyst',
     name: 'ALCO Landing Page Analyst',
     shortName: 'Landing Page Analyst',
-    functionLabel: 'AI analysis untuk landing page dan conversion',
+    functionLabel: 'AI Analysis untuk Landing Page & Conversion Rate Optimization',
     description: 'Audit struktur halaman penawaran, kejelasan copywriting headline, kecepatan visual hierarchy, dan friction checkout.',
     packId: 'meta-ads-starter',
     accent: 'teal',
@@ -126,10 +166,11 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
     pricingType: 'coming-soon',
     priceLabel: 'Coming Soon',
     currency: 'IDR',
-    isPublished: true,
+    published: true,
     publishedAt: '2026-09-02',
     version: '0.9.0-beta',
     latestVersion: '0.9.0-beta',
+    releaseNotes: 'Under active development for Q4 2026 launch.',
     comingSoon: true,
     launchMode: 'disabled',
     features: [
@@ -140,9 +181,10 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
   },
   {
     id: 'ai-spy-ads',
+    appId: 'ai-spy-ads',
     name: 'ALCO AI Spy Ads',
     shortName: 'AI Spy Ads',
-    functionLabel: 'Ads research & competitor intelligence',
+    functionLabel: 'Competitor Ads Research & Intelligence Mining',
     description: 'Riset library iklan kompetitor teratas di industri Anda, bongkar pola hook visual, dan temukan celah diferensiasi pasar.',
     packId: 'meta-ads-starter',
     accent: 'indigo',
@@ -150,10 +192,11 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
     pricingType: 'coming-soon',
     priceLabel: 'Coming Soon',
     currency: 'IDR',
-    isPublished: true,
+    published: true,
     publishedAt: '2026-09-03',
     version: '0.9.0-beta',
     latestVersion: '0.9.0-beta',
+    releaseNotes: 'Under active development for Q4 2026 launch.',
     comingSoon: true,
     launchMode: 'disabled',
     features: [
@@ -167,7 +210,7 @@ export const ECOSYSTEM_APPS: EcosystemApp[] = [
 export const HUB_META = {
   name: 'ALCO Hub',
   ecosystem: 'Aladzan Corpora Private App Store',
-  tagline: 'Official software distribution and ecosystem control.',
+  tagline: 'Centralized software distribution, licensing, and ecosystem control.',
   principles: 'ALCO Hub mengatur ekosistem & lisensi. Setiap ALCO App mengerjakan fungsi spesifiknya.',
-  version: '1.1.0',
+  version: '1.2.0',
 };
