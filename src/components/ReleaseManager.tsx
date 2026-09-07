@@ -1,11 +1,12 @@
 /**
- * ALCO Hub - Release Manager Component (Direct GitHub Releases & Supabase Architecture)
+ * ALCO Hub - Release Manager Component (One-Click UI Release & GitHub CLI Architecture)
  * 
- * Antarmuka resmi Owner Portal untuk mengunggah installer (.exe) langsung ke GitHub Releases
- * dan memperbarui metadata katalog Supabase tanpa melalui Edge Function (Mencegah Limit Memori HTTP 546).
+ * Antarmuka resmi Owner Portal untuk mempublikasikan rilis aplikasi ekosistem ALCO:
+ * 1. Default / Primary Mode: ONE-CLICK UI RELEASE (Electron Main Process GitHub CLI engine + Auto Supabase Sync)
+ * 2. Advanced Tools: Manual GitHub CLI Script Generator & Direct In-App PAT Stream
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   UploadCloud,
   FileCode,
@@ -31,13 +32,20 @@ import {
   Github,
   ChevronDown,
   ChevronUp,
+  FolderOpen,
+  Zap,
+  RefreshCw,
+  Sliders,
 } from 'lucide-react';
 import {
   EcosystemApp,
   ReleaseUploadProgress,
+  ReleaseUploadStatus,
   AdminAuthSession,
+  GhCliStatus,
 } from '../types';
 import {
+  executeOneClickRelease,
   uploadAndPublishRelease,
   calculateFileSha256,
   getGitHubPublishConfig,
@@ -49,6 +57,7 @@ import {
   DEFAULT_GITHUB_REPO_OWNER,
   DEFAULT_GITHUB_REPO_NAME,
 } from '../services/releaseService';
+import { saveAppToCloud } from '../services/storeService';
 import {
   suggestNextVersion,
   bumpPatch,
@@ -66,37 +75,41 @@ interface ReleaseManagerProps {
   onNavigateToTab?: (tab: 'apps') => void;
 }
 
+type PublishMode = 'one-click' | 'manual-cli' | 'direct-pat';
+
 export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
   apps,
   adminSession,
   onCatalogUpdated,
   onNavigateToTab,
 }) => {
-  // Mode Tab: Terminal CLI Script (RECOMMENDED/Default) vs Direct PAT Upload (Advanced)
-  const [publishMode, setPublishMode] = useState<'cli' | 'direct'>('cli');
+  // Mode Tab: One-Click UI Release (DEFAULT) vs Advanced Tools
+  const [publishMode, setPublishMode] = useState<PublishMode>('one-click');
+  const [showAdvancedMenu, setShowAdvancedMenu] = useState(false);
 
-  // GitHub Config State (Owner Session)
+  // GitHub Config State (Owner Session / Repo target)
   const [ghConfig, setGhConfig] = useState<GitHubPublishConfig>(getGitHubPublishConfig);
   const [showGhToken, setShowGhToken] = useState(false);
   const [showGhSettings, setShowGhSettings] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
+  // GitHub CLI Host Status
+  const [ghCliStatus, setGhCliStatus] = useState<GhCliStatus | null>(null);
+  const [isCheckingGhCli, setIsCheckingGhCli] = useState(false);
+
   // Selection & Input States
   const [selectedAppId, setSelectedAppId] = useState<string>(apps[0]?.appId || apps[0]?.id || '');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFilePath, setSelectedFilePath] = useState<string>('');
+  const [selectedFileName, setSelectedFileName] = useState<string>('');
+  const [selectedFileSize, setSelectedFileSize] = useState<number>(0);
   const [versionInput, setVersionInput] = useState<string>('');
   const [releaseNotesInput, setReleaseNotesInput] = useState<string>('');
   const [isCalculatingHash, setIsCalculatingHash] = useState(false);
   const [precomputedSha256, setPrecomputedSha256] = useState<string>('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Metadata Sync State (for CLI workflow)
-  const [isSyncingMetadata, setIsSyncingMetadata] = useState(false);
-  const [syncResultMsg, setSyncResultMsg] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [customDownloadUrlInput, setCustomDownloadUrlInput] = useState<string>('');
-  const [customSha256Input, setCustomSha256Input] = useState<string>('');
-
-  // Upload Progress State
+  // Upload Progress & Workflow Pipeline State
   const [uploadProgress, setUploadProgress] = useState<ReleaseUploadProgress>({
     status: 'idle',
     progressPercent: 0,
@@ -105,19 +118,59 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     currentStepMessage: '',
   });
 
+  // Partial failure state (GitHub uploaded, Supabase pending sync)
+  const [pendingSupabaseData, setPendingSupabaseData] = useState<{
+    app: EcosystemApp;
+    version: string;
+    downloadUrl: string;
+    sha256: string;
+    releaseNotes: string;
+  } | null>(null);
+  const [isRetryingSupabase, setIsRetryingSupabase] = useState(false);
+
+  // Manual CLI Mode states
+  const [isSyncingManualMetadata, setIsSyncingManualMetadata] = useState(false);
+  const [manualSyncResultMsg, setManualSyncResultMsg] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isElectron = Boolean(window.alcoHub?.publishReleaseGhCli);
 
   const selectedApp = apps.find(
     (a) => (a.appId && a.appId === selectedAppId) || a.id === selectedAppId
   ) || apps[0];
 
-  // Auto-suggest next version saat app dipilih pertama kali
+  // Auto-suggest next version saat app dipilih
   useEffect(() => {
     if (selectedApp && !versionInput) {
       const currentLatest = selectedApp.latestVersion || selectedApp.version;
       setVersionInput(suggestNextVersion(currentLatest));
     }
   }, [selectedApp]);
+
+  // Check GitHub CLI status on mount
+  const checkGhCli = useCallback(async () => {
+    if (!window.alcoHub?.checkGhCliStatus) return;
+    setIsCheckingGhCli(true);
+    try {
+      const status = await window.alcoHub.checkGhCliStatus();
+      setGhCliStatus(status);
+    } catch {
+      setGhCliStatus({
+        installed: false,
+        authenticated: false,
+        version: null,
+        account: null,
+        error: 'Gagal memeriksa status GitHub CLI di sistem.',
+      });
+    } finally {
+      setIsCheckingGhCli(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkGhCli();
+  }, [checkGhCli]);
 
   // Handler: Ganti Aplikasi
   const handleSelectApp = (appId: string) => {
@@ -137,22 +190,38 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     if (type === 'major') setVersionInput(bumpMajor(baseVer));
   };
 
-  // Handler Simpan GitHub Config di Sesi Owner
-  const handleSaveGhConfig = (e: React.FormEvent) => {
-    e.preventDefault();
-    saveGitHubPublishConfig(ghConfig);
-    setSaveSuccessMsg('Konfigurasi GitHub tersimpan di sesi Owner.');
-    setTimeout(() => setSaveSuccessMsg(null), 3000);
+  // Handler: Native File Picker in Electron
+  const handlePickNativeFile = async () => {
+    if (window.alcoHub?.selectInstallerFile) {
+      const result = await window.alcoHub.selectInstallerFile();
+      if (!result.canceled && result.filePath) {
+        setSelectedFilePath(result.filePath);
+        setSelectedFileName(result.fileName || result.filePath.split(/[\\/]/).pop() || '');
+        setSelectedFileSize(result.fileSize || 0);
+        setSelectedFile(null); // Managed via file path
+
+        setIsCalculatingHash(true);
+        setPrecomputedSha256('');
+
+        try {
+          if (window.alcoHub.calculateFileHash) {
+            const hashRes = await window.alcoHub.calculateFileHash(result.filePath);
+            if (hashRes.success && hashRes.sha256) {
+              setPrecomputedSha256(hashRes.sha256);
+            }
+          }
+        } catch (err) {
+          console.warn('Gagal menghitung SHA-256 lokal:', err);
+        } finally {
+          setIsCalculatingHash(false);
+        }
+      }
+    } else {
+      fileInputRef.current?.click();
+    }
   };
 
-  const handleClearGhToken = () => {
-    clearGitHubPublishConfig();
-    setGhConfig((prev) => ({ ...prev, token: '' }));
-    setSaveSuccessMsg('Token GitHub dihapus dari sesi.');
-    setTimeout(() => setSaveSuccessMsg(null), 3000);
-  };
-
-  // Handler: Pilih File
+  // Handler: Standard HTML File Input / Drop
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -163,10 +232,24 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     }
 
     setSelectedFile(file);
+    setSelectedFileName(file.name);
+    setSelectedFileSize(file.size);
+    // In Electron with web preferences, file.path is available
+    const nativePath = (file as any).path || '';
+    setSelectedFilePath(nativePath);
+
     setIsCalculatingHash(true);
     setPrecomputedSha256('');
 
     try {
+      if (nativePath && window.alcoHub?.calculateFileHash) {
+        const hashRes = await window.alcoHub.calculateFileHash(nativePath);
+        if (hashRes.success && hashRes.sha256) {
+          setPrecomputedSha256(hashRes.sha256);
+          setIsCalculatingHash(false);
+          return;
+        }
+      }
       const hash = await calculateFileSha256(file);
       setPrecomputedSha256(hash);
     } catch (err) {
@@ -176,7 +259,6 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     }
   };
 
-  // Drag and Drop Handlers
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
   };
@@ -192,10 +274,23 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     }
 
     setSelectedFile(file);
+    setSelectedFileName(file.name);
+    setSelectedFileSize(file.size);
+    const nativePath = (file as any).path || '';
+    setSelectedFilePath(nativePath);
+
     setIsCalculatingHash(true);
     setPrecomputedSha256('');
 
     try {
+      if (nativePath && window.alcoHub?.calculateFileHash) {
+        const hashRes = await window.alcoHub.calculateFileHash(nativePath);
+        if (hashRes.success && hashRes.sha256) {
+          setPrecomputedSha256(hashRes.sha256);
+          setIsCalculatingHash(false);
+          return;
+        }
+      }
       const hash = await calculateFileSha256(file);
       setPrecomputedSha256(hash);
     } catch (err) {
@@ -205,18 +300,12 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     }
   };
 
-  // Handler: Start Direct Upload
-  const handleStartRelease = async (e: React.FormEvent) => {
+  // Handler: ONE-CLICK UI RELEASE (Default & Primary)
+  const handleOneClickPublish = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!adminSession.isAuthenticated || adminSession.role !== 'owner') {
       alert('Akses Ditolak: Anda harus login sebagai Owner untuk mempublikasikan rilis.');
-      return;
-    }
-
-    if (!ghConfig.token.trim()) {
-      setShowGhSettings(true);
-      alert('Masukkan GitHub Personal Access Token (PAT) Owner terlebih dahulu.');
       return;
     }
 
@@ -225,87 +314,116 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
       return;
     }
 
-    if (!selectedFile) {
-      alert('Pilih file installer Windows (.exe) terlebih dahulu.');
-      return;
+    const effectiveFilePath = selectedFilePath || (selectedFile as any)?.path;
+    if (!effectiveFilePath) {
+      if (!selectedFile) {
+        alert('Pilih file installer Windows (.exe) terlebih dahulu.');
+        return;
+      }
+      // If running without direct path in browser, prompt to use Direct PAT or CLI
+      if (!isElectron) {
+        alert('Mode One-Click membutuhkan aplikasi desktop ALCO Hub. Di web browser, silakan gunakan menu "Advanced Tools -> Manual GitHub CLI" atau "Direct PAT Stream".');
+        setPublishMode('manual-cli');
+        return;
+      }
     }
 
     const cleanVer = normalizeVersion(versionInput);
     if (!cleanVer) {
-      alert('Masukkan nomor versi rilis yang valid (contoh: 0.1.1).');
+      alert('Masukkan nomor versi rilis yang valid (contoh: 1.0.1).');
       return;
     }
 
     const currentLatest = selectedApp.latestVersion || selectedApp.version;
     if (currentLatest && compareSemver(cleanVer, currentLatest) <= 0) {
       const confirmLower = window.confirm(
-        `PERINGATAN VERSI: Versi baru (${cleanVer}) sama atau lebih rendah dari versi yang sudah dirilis (v${currentLatest}).\n\nGitHub Releases tidak mengizinkan penimpaan rilis yang sudah ada. Apakah Anda yakin ingin melanjutkan?`
+        `PERINGATAN VERSI: Versi baru (${cleanVer}) sama atau lebih rendah dari versi yang sudah tercatat (v${currentLatest}).\n\nApakah Anda yakin ingin mempublikasikan ulang ke tag ini?`
       );
       if (!confirmLower) return;
     }
 
     const cleanNotes = releaseNotesInput.trim() || `Rilis resmi ${selectedApp.name} versi v${cleanVer}.`;
 
-    // Pastikan konfigurasi tersimpan
-    saveGitHubPublishConfig(ghConfig);
+    setPendingSupabaseData(null);
 
-    const result = await uploadAndPublishRelease({
+    const result = await executeOneClickRelease({
       app: selectedApp,
-      file: selectedFile,
       version: cleanVer,
+      filePath: effectiveFilePath,
+      fileName: selectedFileName || selectedFile?.name,
       releaseNotes: cleanNotes,
-      githubConfig: ghConfig,
+      repoOwner: ghConfig.owner,
+      repoName: ghConfig.repo,
       onProgress: (prog) => {
         setUploadProgress(prog);
       },
     });
 
-    if (result.success && result.data) {
-      // Update catalog di state lokal React
+    if (result.success && result.updatedApp) {
       const canonicalId = selectedApp.appId || selectedApp.id;
       const updatedList = apps.map((a) => {
         if ((a.appId && a.appId === canonicalId) || a.id === canonicalId) {
-          return {
-            ...a,
-            latestVersion: cleanVer,
-            downloadUrl: result.data!.downloadUrl,
-            sha256: result.data!.sha256,
-            releaseNotes: cleanNotes,
-            updatedAt: new Date().toISOString(),
-          };
+          return result.updatedApp!;
         }
         return a;
       });
-
       onCatalogUpdated(updatedList);
+    } else if (result.stage === 'supabase_sync_failed' && result.data) {
+      // Keep pending data for retry
+      setPendingSupabaseData({
+        app: selectedApp,
+        version: cleanVer,
+        downloadUrl: result.data.downloadUrl,
+        sha256: result.data.sha256,
+        releaseNotes: cleanNotes,
+      });
     }
   };
 
-  const handleCopy = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2500);
-  };
+  // Handler: Retry Supabase Metadata Sync if initial cloud sync failed
+  const handleRetrySupabaseSync = async () => {
+    if (!pendingSupabaseData) return;
 
-  const handleResetForm = () => {
-    setSelectedFile(null);
-    setPrecomputedSha256('');
-    setUploadProgress({
-      status: 'idle',
-      progressPercent: 0,
-      bytesUploaded: 0,
-      totalBytes: 0,
-      currentStepMessage: '',
-    });
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    setIsRetryingSupabase(true);
+    const updatedApp: EcosystemApp = {
+      ...pendingSupabaseData.app,
+      latestVersion: pendingSupabaseData.version,
+      downloadUrl: pendingSupabaseData.downloadUrl,
+      sha256: pendingSupabaseData.sha256,
+      releaseNotes: pendingSupabaseData.releaseNotes,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const cloudSaveRes = await saveAppToCloud(updatedApp, false);
+    setIsRetryingSupabase(false);
+
+    if (cloudSaveRes.success) {
+      setUploadProgress((prev) => ({
+        ...prev,
+        status: 'published',
+        progressPercent: 100,
+        currentStepMessage: 'Metadata Supabase berhasil disinkronkan!',
+        error: undefined,
+      }));
+      setPendingSupabaseData(null);
+
+      const canonicalId = updatedApp.appId || updatedApp.id;
+      const updatedList = apps.map((a) => {
+        if ((a.appId && a.appId === canonicalId) || a.id === canonicalId) {
+          return updatedApp;
+        }
+        return a;
+      });
+      onCatalogUpdated(updatedList);
+    } else {
+      alert(`Gagal menyinkronkan metadata ke Supabase: ${cloudSaveRes.message}`);
     }
   };
 
-  // Handler: 1-Click Sync Metadata Supabase setelah rilis via CLI sukses
-  const handleSyncCliMetadata = async () => {
+  // Handler: Manual CLI Metadata Sync (Under Advanced Tools)
+  const handleManualCliSync = async () => {
     if (!adminSession.isAuthenticated || adminSession.role !== 'owner') {
-      alert('Akses Ditolak: Anda harus login sebagai Owner untuk memperbarui Supabase.');
+      alert('Akses Ditolak: Anda harus login sebagai Owner.');
       return;
     }
 
@@ -320,11 +438,11 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
       return;
     }
 
-    const finalFileName = selectedFile?.name || `${canonicalAppId}-Setup.exe`;
-    const finalSha256 = customSha256Input.trim() || precomputedSha256 || '';
+    const finalFileName = selectedFileName || selectedFile?.name || `${canonicalAppId}-Setup.exe`;
+    const finalSha256 = precomputedSha256 || '';
 
-    setIsSyncingMetadata(true);
-    setSyncResultMsg(null);
+    setIsSyncingManualMetadata(true);
+    setManualSyncResultMsg(null);
 
     const res = await syncCliReleaseToSupabase({
       app: selectedApp,
@@ -336,89 +454,246 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
       repoName: ghConfig.repo,
     });
 
-    setIsSyncingMetadata(false);
+    setIsSyncingManualMetadata(false);
 
     if (res.success && res.updatedApp) {
-      setSyncResultMsg({ type: 'success', message: res.message });
+      setManualSyncResultMsg({ type: 'success', message: res.message });
       const targetId = selectedApp.appId || selectedApp.id;
       const updatedList = apps.map((a) => ((a.appId && a.appId === targetId) || a.id === targetId ? res.updatedApp! : a));
       onCatalogUpdated(updatedList);
     } else {
-      setSyncResultMsg({ type: 'error', message: res.message });
+      setManualSyncResultMsg({ type: 'error', message: res.message });
     }
   };
 
-  const isUploading =
+  // Handler: Direct In-App Upload via PAT (Under Advanced Tools)
+  const handleDirectPatPublish = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!ghConfig.token.trim()) {
+      setShowGhSettings(true);
+      alert('Masukkan GitHub Personal Access Token (PAT) Owner terlebih dahulu.');
+      return;
+    }
+
+    if (!selectedFile) {
+      alert('Pilih file installer (.exe) terlebih dahulu.');
+      return;
+    }
+
+    const cleanVer = normalizeVersion(versionInput);
+    if (!cleanVer) {
+      alert('Nomor versi tidak valid.');
+      return;
+    }
+
+    const cleanNotes = releaseNotesInput.trim() || `Rilis resmi ${selectedApp.name} versi v${cleanVer}.`;
+    saveGitHubPublishConfig(ghConfig);
+
+    const result = await uploadAndPublishRelease({
+      app: selectedApp,
+      file: selectedFile,
+      version: cleanVer,
+      releaseNotes: cleanNotes,
+      githubConfig: ghConfig,
+      onProgress: (prog) => {
+        setUploadProgress(prog);
+      },
+    });
+
+    if (result.success && result.data) {
+      const canonicalId = selectedApp.appId || selectedApp.id;
+      const updatedList = apps.map((a) => {
+        if ((a.appId && a.appId === canonicalId) || a.id === canonicalId) {
+          return {
+            ...a,
+            latestVersion: cleanVer,
+            downloadUrl: result.data!.downloadUrl,
+            sha256: result.data!.sha256,
+            releaseNotes: cleanNotes,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return a;
+      });
+      onCatalogUpdated(updatedList);
+    }
+  };
+
+  const handleCopy = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2500);
+  };
+
+  const handleResetForm = () => {
+    setSelectedFile(null);
+    setSelectedFilePath('');
+    setSelectedFileName('');
+    setSelectedFileSize(0);
+    setPrecomputedSha256('');
+    setPendingSupabaseData(null);
+    setUploadProgress({
+      status: 'idle',
+      progressPercent: 0,
+      bytesUploaded: 0,
+      totalBytes: 0,
+      currentStepMessage: '',
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const isWorking =
     uploadProgress.status === 'preparing' ||
-    uploadProgress.status === 'uploading' ||
+    uploadProgress.status === 'calculating_sha' ||
     uploadProgress.status === 'creating_release' ||
+    uploadProgress.status === 'uploading' ||
+    uploadProgress.status === 'verifying' ||
+    uploadProgress.status === 'syncing_metadata' ||
     uploadProgress.status === 'updating_catalog';
 
   const canonicalAppId = selectedApp?.appId || selectedApp?.id || '';
   const currentAppLatest = selectedApp?.latestVersion || selectedApp?.version || '0.1.0';
   const expectedTag = generateGitHubTag(canonicalAppId, versionInput || '0.1.0');
   const expectedReleaseName = `${selectedApp?.name || 'Aplikasi'} v${normalizeVersion(versionInput || '0.1.0')}`;
-  const isVersionConflictWarning = Boolean(
-    versionInput &&
-    currentAppLatest &&
-    compareSemver(normalizeVersion(versionInput), currentAppLatest) <= 0
-  );
 
-  // CLI Command Preview
+  // CLI Data for Advanced Manual Mode
   const cliData = generateGhCliCommand({
     appId: canonicalAppId,
     appName: selectedApp?.name || 'Aplikasi',
     version: versionInput || '0.1.0',
-    fileName: selectedFile?.name || `${canonicalAppId}-Setup.exe`,
+    fileName: selectedFileName || selectedFile?.name || `${canonicalAppId}-Setup.exe`,
     notes: releaseNotesInput,
     repoOwner: ghConfig.owner,
     repoName: ghConfig.repo,
   });
 
+  // Workflow Step Status Map
+  const workflowSteps: { key: ReleaseUploadStatus; label: string }[] = [
+    { key: 'preparing', label: 'Preparing' },
+    { key: 'calculating_sha', label: 'Calculating SHA' },
+    { key: 'creating_release', label: 'Creating Release' },
+    { key: 'uploading', label: 'Uploading' },
+    { key: 'verifying', label: 'Verifying' },
+    { key: 'syncing_metadata', label: 'Syncing Metadata' },
+    { key: 'published', label: 'Published' },
+  ];
+
+  const getStepState = (stepKey: ReleaseUploadStatus) => {
+    const order: ReleaseUploadStatus[] = [
+      'preparing',
+      'calculating_sha',
+      'creating_release',
+      'uploading',
+      'verifying',
+      'syncing_metadata',
+      'published',
+    ];
+    const currentIndex = order.indexOf(uploadProgress.status === 'completed' ? 'published' : uploadProgress.status);
+    const targetIndex = order.indexOf(stepKey);
+
+    if (uploadProgress.status === 'failed') {
+      return targetIndex === currentIndex ? 'failed' : targetIndex < currentIndex ? 'done' : 'pending';
+    }
+    if (uploadProgress.status === 'published' || uploadProgress.status === 'completed') {
+      return 'done';
+    }
+    if (currentIndex === -1) return 'pending';
+    if (targetIndex < currentIndex) return 'done';
+    if (targetIndex === currentIndex) return 'active';
+    return 'pending';
+  };
+
   return (
     <div id="alco-release-manager" className="space-y-6">
       {/* Header Banner */}
-      <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/40 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
+      <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/50 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+        <div className="space-y-1.5">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center gap-1.5">
-              <UploadCloud className="w-3.5 h-3.5" />
-              Direct GitHub Releases Pipeline
+              <Zap className="w-3.5 h-3.5" />
+              One-Click UI Release
             </span>
             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
               <ShieldCheck className="w-3 h-3" />
-              No Edge Function Limit (Direct Stream)
+              Direct Computer → GitHub Releases CDN
             </span>
+            {ghCliStatus?.authenticated && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1">
+                <Github className="w-3 h-3 text-white" />
+                gh: {ghCliStatus.account || 'Authenticated'}
+              </span>
+            )}
           </div>
-          <h2 className="text-xl font-black text-white tracking-tight">
-            Release Publisher & Binary Distribution
+          <h2 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
+            <span>ALCO Release Manager</span>
+            <span className="text-xs font-normal text-slate-400 font-sans">v2.0 • One-Click Publisher</span>
           </h2>
           <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
-            Unggah installer Windows (.exe) berukuran besar langsung dari komputer Owner ke GitHub Releases CDN. Sistem menghitung SHA-256 lokal, membuat tag rilis permanen, dan otomatis menyinkronkan versi terbaru ke Supabase.
+            Publikasikan installer Windows (.exe) secara otomatis ke GitHub Releases CDN dan sinkronkan metadata katalog ke Supabase dalam satu klik tanpa perlu membuka Command Prompt atau PowerShell.
           </p>
         </div>
 
         <div className="shrink-0 flex items-center gap-2">
+          {/* Target Repo Quick Info */}
+          <div className="hidden sm:block text-right text-[11px] pr-2">
+            <span className="text-slate-500 block">Target Releases Repo:</span>
+            <span className="font-mono font-bold text-indigo-300">
+              {ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}
+            </span>
+          </div>
+
           <button
             type="button"
             onClick={() => setShowGhSettings(!showGhSettings)}
-            className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border ${
-              ghConfig.token
-                ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
-            }`}
+            className="px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 shadow-sm"
           >
-            <Key className="w-3.5 h-3.5" />
-            <span>{ghConfig.token ? 'GitHub Terhubung' : 'Setup GitHub PAT'}</span>
+            <Settings2 className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Repo Settings</span>
             {showGhSettings ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
 
-      {/* GitHub Authentication & Repo Config Panel (Owner Session) */}
+      {/* GitHub CLI Host Health Notification (If not installed / not logged in) */}
+      {isElectron && ghCliStatus && !ghCliStatus.authenticated && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="font-bold text-white text-xs">Perhatian: GitHub CLI Membutuhkan Otentikasi</h4>
+              <p className="text-[11px] text-amber-200/90 mt-0.5">
+                {ghCliStatus.error || 'GitHub CLI belum login ke akun GitHub Anda.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={checkGhCli}
+              disabled={isCheckingGhCli}
+              className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 text-[11px] font-semibold flex items-center gap-1 transition-colors"
+            >
+              <RotateCw className={`w-3 h-3 ${isCheckingGhCli ? 'animate-spin' : ''}`} />
+              <span>Cek Ulang Status</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Target Repo Settings Panel */}
       {showGhSettings && (
         <form
-          onSubmit={handleSaveGhConfig}
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveGitHubPublishConfig(ghConfig);
+            setSaveSuccessMsg('Konfigurasi Repository rilis tersimpan.');
+            setTimeout(() => setSaveSuccessMsg(null), 3000);
+          }}
           className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-lg animate-in fade-in"
         >
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -427,22 +702,17 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                 <Github className="w-4 h-4" />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-white">Konfigurasi GitHub Publisher (Khusus Owner)</h4>
+                <h4 className="text-xs font-bold text-white">Target GitHub Releases Repository</h4>
                 <p className="text-[11px] text-slate-400">
-                  Token disimpan secara aman hanya di memori sesi browser Owner ini dan TIDAK PERNAH dibundel ke installer publik.
+                  Secara default rilis dialirkan ke repository resmi Aladzan Corpora.
                 </p>
               </div>
             </div>
-            {ghConfig.token && (
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                Active Session
-              </span>
-            )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-300">Repository Owner / Org</label>
+              <label className="text-[11px] font-semibold text-slate-300">Repository Owner / Organization</label>
               <input
                 type="text"
                 value={ghConfig.owner}
@@ -464,63 +734,21 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                 required
               />
             </div>
-
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-slate-300">GitHub Personal Access Token (PAT)</label>
-                <a
-                  href="https://github.com/settings/tokens/new?scopes=repo&description=ALCO+Hub+Owner+Release+Publisher"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] text-indigo-400 hover:text-indigo-300 inline-flex items-center gap-1"
-                >
-                  <span>Buat PAT (scope: repo)</span>
-                  <ExternalLink className="w-2.5 h-2.5" />
-                </a>
-              </div>
-              <div className="relative">
-                <input
-                  type={showGhToken ? 'text' : 'password'}
-                  value={ghConfig.token}
-                  onChange={(e) => setGhConfig({ ...ghConfig, token: e.target.value })}
-                  placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 pr-9 text-xs font-mono text-white focus:outline-hidden focus:border-indigo-500"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowGhToken(!showGhToken)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                >
-                  {showGhToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            </div>
           </div>
 
           <div className="flex items-center justify-between pt-1">
-            <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-              <Lock className="w-3 h-3 text-slate-400" />
-              <span>Target Rilis: <strong className="text-indigo-300 font-mono">{ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}</strong></span>
+            <p className="text-[11px] text-slate-500">
+              Target Rilis:{' '}
+              <strong className="text-indigo-300 font-mono">
+                {ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}
+              </strong>
             </p>
-
-            <div className="flex items-center gap-2">
-              {ghConfig.token && (
-                <button
-                  type="button"
-                  onClick={handleClearGhToken}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 text-xs transition-colors"
-                >
-                  Hapus Token
-                </button>
-              )}
-              <button
-                type="submit"
-                className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm"
-              >
-                Simpan Konfigurasi Sesi
-              </button>
-            </div>
+            <button
+              type="submit"
+              className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm"
+            >
+              Simpan Target Repo
+            </button>
           </div>
 
           {saveSuccessMsg && (
@@ -532,61 +760,104 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
         </form>
       )}
 
-      {/* Mode Selector: CLI Terminal (RECOMMENDED/Default) vs Direct PAT Upload (Advanced) */}
-      <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-        <button
-          type="button"
-          onClick={() => setPublishMode('cli')}
-          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-            publishMode === 'cli'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'text-slate-400 hover:text-white bg-slate-900/50'
-          }`}
-        >
-          <Terminal className="w-3.5 h-3.5" />
-          <span>GitHub CLI Script Generator (RECOMMENDED / Default)</span>
-          <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-            Official
-          </span>
-        </button>
+      {/* Mode Navigation Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+        <div className="flex items-center gap-2">
+          {/* Main Mode: One-Click UI Release (DEFAULT) */}
+          <button
+            type="button"
+            onClick={() => setPublishMode('one-click')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-xs ${
+              publishMode === 'one-click'
+                ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-indigo-600/20 shadow-md'
+                : 'text-slate-400 hover:text-white bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-indigo-200" />
+            <span>One-Click UI Release</span>
+            <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 uppercase">
+              Official Default
+            </span>
+          </button>
+        </div>
 
-        <button
-          type="button"
-          onClick={() => setPublishMode('direct')}
-          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-            publishMode === 'direct'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'text-slate-400 hover:text-white bg-slate-900/50'
-          }`}
-        >
-          <UploadCloud className="w-3.5 h-3.5" />
-          <span>Direct In-App Stream (Advanced / PAT Session)</span>
-          <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-slate-800 text-slate-400 border border-slate-700">
-            Experimental
-          </span>
-        </button>
+        {/* Secondary: Advanced Tools Accordion Trigger */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowAdvancedMenu(!showAdvancedMenu)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors border ${
+              publishMode !== 'one-click'
+                ? 'bg-slate-800 text-indigo-300 border-indigo-500/30'
+                : 'bg-slate-900/50 hover:bg-slate-800 text-slate-400 border-slate-800'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Advanced Tools</span>
+            {showAdvancedMenu ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+
+          {showAdvancedMenu && (
+            <div className="absolute right-0 mt-2 w-64 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl p-1.5 z-30 space-y-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setPublishMode('manual-cli');
+                  setShowAdvancedMenu(false);
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors ${
+                  publishMode === 'manual-cli' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <Terminal className="w-3.5 h-3.5 text-indigo-400" />
+                <div>
+                  <div className="font-bold">Manual GitHub CLI</div>
+                  <div className="text-[10px] text-slate-400 font-normal">CLI Script Generator & Manual Sync</div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPublishMode('direct-pat');
+                  setShowAdvancedMenu(false);
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors ${
+                  publishMode === 'direct-pat' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
+                <div>
+                  <div className="font-bold">Direct In-App Stream</div>
+                  <div className="text-[10px] text-slate-400 font-normal">Browser HTTP Stream via GitHub PAT</div>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Progress / Status Panel (Saat aktif atau selesai) */}
+      {/* Progress & Status Pipeline Visual (Active during publish / completed / failed) */}
       {uploadProgress.status !== 'idle' && (
         <div
           id="release-progress-panel"
-          className={`p-6 rounded-2xl border transition-all duration-300 space-y-4 ${
-            uploadProgress.status === 'completed'
-              ? 'bg-emerald-950/20 border-emerald-500/30'
+          className={`p-6 rounded-2xl border transition-all duration-300 space-y-5 shadow-xl ${
+            uploadProgress.status === 'published' || uploadProgress.status === 'completed'
+              ? 'bg-emerald-950/20 border-emerald-500/30 shadow-emerald-500/5'
               : uploadProgress.status === 'failed'
-              ? 'bg-rose-950/20 border-rose-500/30'
-              : 'bg-slate-900 border-indigo-500/30 shadow-lg shadow-indigo-500/5'
+              ? 'bg-rose-950/20 border-rose-500/30 shadow-rose-500/5'
+              : 'bg-slate-900 border-indigo-500/40 shadow-indigo-500/10'
           }`}
         >
+          {/* Header Status Text */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              {isUploading && (
+              {isWorking && (
                 <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
                   <RotateCw className="w-5 h-5 text-indigo-400 animate-spin" />
                 </div>
               )}
-              {uploadProgress.status === 'completed' && (
+              {(uploadProgress.status === 'published' || uploadProgress.status === 'completed') && (
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
                   <CheckCircle2 className="w-6 h-6 text-emerald-400" />
                 </div>
@@ -599,46 +870,102 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
 
               <div>
                 <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                  {uploadProgress.status === 'preparing' && 'Menyiapkan & Menghitung SHA-256 Lokal...'}
-                  {uploadProgress.status === 'creating_release' && 'Membuat Release & Memvalidasi Tag di GitHub...'}
-                  {uploadProgress.status === 'uploading' && 'Mengunggah Binary Installer ke GitHub CDN...'}
-                  {uploadProgress.status === 'updating_catalog' && 'Menyimpan Metadata Rilis ke Supabase...'}
-                  {uploadProgress.status === 'completed' && 'Rilis Resmi Berhasil Dipublikasikan!'}
-                  {uploadProgress.status === 'failed' && 'Proses Publikasi Rilis Gagal'}
+                  {uploadProgress.status === 'preparing' && '1/6. Menyiapkan & Memeriksa GitHub CLI...'}
+                  {uploadProgress.status === 'calculating_sha' && '2/6. Menghitung SHA-256 Checksum Lokal...'}
+                  {uploadProgress.status === 'creating_release' && '3/6. Mempersiapkan Release di GitHub...'}
+                  {uploadProgress.status === 'uploading' && '4/6. Mengunggah Installer (.exe) ke GitHub Releases CDN...'}
+                  {uploadProgress.status === 'verifying' && '5/6. Memverifikasi Asset Binary di CDN...'}
+                  {uploadProgress.status === 'syncing_metadata' && '6/6. Menyinkronkan Metadata ke Supabase...'}
+                  {(uploadProgress.status === 'published' || uploadProgress.status === 'completed') &&
+                    'Release Berhasil Dipublikasikan!'}
+                  {uploadProgress.status === 'failed' && 'Proses Rilis Terhenti'}
                 </h4>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-400 mt-0.5">
                   {uploadProgress.currentStepMessage}
                 </p>
               </div>
             </div>
 
             <div className="text-right shrink-0">
-              <span className="text-lg font-black font-mono text-white">
+              <span className="text-xl font-black font-mono text-white">
                 {uploadProgress.progressPercent}%
               </span>
             </div>
           </div>
 
+          {/* Workflow Status Pipeline Steps Visual */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 pt-1">
+            {workflowSteps.map((step, idx) => {
+              const state = getStepState(step.key);
+              return (
+                <div
+                  key={step.key}
+                  className={`p-2.5 rounded-xl border text-[10px] font-semibold flex flex-col justify-between transition-all ${
+                    state === 'done'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : state === 'active'
+                      ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-200 ring-1 ring-indigo-500/30 animate-pulse'
+                      : state === 'failed'
+                      ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                      : 'bg-slate-950/40 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[9px] opacity-75">0{idx + 1}</span>
+                    {state === 'done' && <Check className="w-3 h-3 text-emerald-400" />}
+                    {state === 'active' && <RotateCw className="w-3 h-3 text-indigo-400 animate-spin" />}
+                    {state === 'failed' && <AlertTriangle className="w-3 h-3 text-rose-400" />}
+                  </div>
+                  <span className="mt-1 font-bold truncate">{step.label}</span>
+                </div>
+              );
+            })}
+          </div>
+
           {/* Progress Bar */}
-          <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+          <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
             <div
               className={`h-full transition-all duration-300 rounded-full ${
-                uploadProgress.status === 'completed'
+                uploadProgress.status === 'published' || uploadProgress.status === 'completed'
                   ? 'bg-emerald-400'
                   : uploadProgress.status === 'failed'
                   ? 'bg-rose-500'
-                  : 'bg-indigo-500'
+                  : 'bg-gradient-to-r from-indigo-500 to-cyan-400'
               }`}
               style={{ width: `${uploadProgress.progressPercent}%` }}
             />
           </div>
 
-          {/* Error Message Details */}
-          {uploadProgress.status === 'failed' && uploadProgress.error && (
+          {/* Partial Failure Notice: GitHub succeeded, Supabase pending */}
+          {pendingSupabaseData && (
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3 text-xs">
+              <div className="font-bold text-amber-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Binary berhasil di GitHub, metadata belum tersinkron.</span>
+              </div>
+              <p className="text-amber-200/90 text-[11px] leading-relaxed">
+                Installer .exe telah berhasil terunggah dan aktif di GitHub Releases (<code className="font-mono text-white">{pendingSupabaseData.downloadUrl}</code>), namun koneksi ke Supabase mengalami kendala saat mencatat metadata. Release di GitHub tetap aman dan tidak akan dihapus.
+              </p>
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={handleRetrySupabaseSync}
+                  disabled={isRetryingSupabase}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-md active:scale-95 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isRetryingSupabase ? 'animate-spin' : ''}`} />
+                  <span>Retry Metadata Sync</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Standard Error Message Details */}
+          {uploadProgress.status === 'failed' && uploadProgress.error && !pendingSupabaseData && (
             <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 space-y-2 text-xs">
               <div className="font-bold text-rose-300 flex items-center gap-1.5">
                 <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                Detail Kegagalan:
+                Detail Kendala:
               </div>
               <p className="text-rose-200/90 font-mono text-[11px] leading-relaxed break-all">
                 {uploadProgress.error}
@@ -659,475 +986,191 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                   }}
                   className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-colors"
                 >
-                  Gunakan Patch Berikutnya (+0.0.1)
+                  Naikkan Nomor Versi (+0.0.1)
                 </button>
               </div>
             </div>
           )}
 
-          {/* Completed Success Summary */}
-          {uploadProgress.status === 'completed' && uploadProgress.releaseData && (
-            <div className="p-4 rounded-xl bg-slate-950/80 border border-emerald-500/20 space-y-3.5 text-xs">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <span className="text-[11px] text-slate-500 block">GitHub Release Tag Resmi:</span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                      {uploadProgress.releaseData.tag}
+          {/* Completed Success Summary Card */}
+          {(uploadProgress.status === 'published' || uploadProgress.status === 'completed') &&
+            uploadProgress.releaseData && (
+              <div className="p-5 rounded-2xl bg-slate-950/90 border border-emerald-500/30 space-y-4 text-xs shadow-xl">
+                <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  <h4 className="text-sm font-extrabold text-white">
+                    Release Berhasil Dipublikasikan
+                  </h4>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Aplikasi:</span>
+                    <span className="font-bold text-white text-xs block truncate">
+                      {selectedApp.name} ({uploadProgress.releaseData.appId})
                     </span>
-                    {uploadProgress.releaseData.htmlUrl && (
-                      <a
-                        href={uploadProgress.releaseData.htmlUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-slate-400 hover:text-white inline-flex items-center gap-1 text-[11px]"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        Buka di GitHub
-                      </a>
-                    )}
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Versi Baru (Supabase):</span>
+                    <span className="font-mono font-bold text-emerald-400 text-xs block">
+                      v{uploadProgress.releaseData.version}
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Status Supabase:</span>
+                    <span className="font-semibold text-emerald-400 text-xs flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" />
+                      Tersinkronisasi & Aktif
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">GitHub Release Tag:</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono font-bold text-indigo-300 text-xs truncate">
+                        {uploadProgress.releaseData.tag}
+                      </span>
+                      {uploadProgress.releaseData.htmlUrl && (
+                        <a
+                          href={uploadProgress.releaseData.htmlUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-slate-400 hover:text-white"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1 sm:col-span-2">
+                    <span className="text-[10px] text-slate-500 font-semibold block uppercase">Installer File:</span>
+                    <span className="font-mono text-slate-300 text-xs block truncate">
+                      {uploadProgress.releaseData.fileName || selectedFileName}
+                      {uploadProgress.releaseData.fileSize ? ` (${Math.round((uploadProgress.releaseData.fileSize / 1024 / 1024) * 10) / 10} MB)` : ''}
+                    </span>
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <span className="text-[11px] text-slate-500 block">Versi Baru Tercatat di Supabase:</span>
-                  <span className="font-mono font-bold text-white">
-                    v{uploadProgress.releaseData.version}
+                {/* SHA-256 Checksum Card */}
+                <div className="space-y-1 pt-1">
+                  <span className="text-[11px] text-slate-400 block font-semibold">
+                    Verified SHA-256 Checksum:
                   </span>
-                </div>
-              </div>
-
-              {/* Verified Download URL */}
-              <div className="space-y-1 pt-2 border-t border-slate-800">
-                <span className="text-[11px] text-slate-400 block font-semibold">
-                  Official Asset Download URL:
-                </span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={uploadProgress.releaseData.downloadUrl}
-                    className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-mono text-slate-300 focus:outline-hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopy(uploadProgress.releaseData!.downloadUrl, 'download-url')
-                    }
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1.5 transition-colors"
-                  >
-                    {copiedKey === 'download-url' ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        <span>Tersalin</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Salin URL</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Verified SHA-256 */}
-              <div className="space-y-1">
-                <span className="text-[11px] text-slate-400 block font-semibold">
-                  Verified SHA-256 Checksum:
-                </span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={uploadProgress.releaseData.sha256}
-                    className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-mono text-emerald-400 focus:outline-hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleCopy(uploadProgress.releaseData!.sha256, 'sha256-hash')
-                    }
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1.5 transition-colors"
-                  >
-                    {copiedKey === 'sha256-hash' ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-400" />
-                        <span>Tersalin</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Salin Hash</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[11px] text-slate-400">
-                  Status Diterbitkan saat ini:{' '}
-                  <span className={uploadProgress.releaseData.published ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
-                    {uploadProgress.releaseData.published ? 'Published (Tersedia untuk pengguna)' : 'Draft (Belum dipublish)'}
-                  </span>
-                </p>
-
-                <div className="flex items-center gap-2">
-                  {onNavigateToTab && !uploadProgress.releaseData.published && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={uploadProgress.releaseData.sha256}
+                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-mono text-emerald-400 focus:outline-hidden"
+                    />
                     <button
                       type="button"
-                      onClick={() => onNavigateToTab('apps')}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all shadow-xs"
+                      onClick={() => handleCopy(uploadProgress.releaseData!.sha256, 'sha256-hash')}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1.5 transition-colors shrink-0"
                     >
-                      <span>Buka Katalog & Terbitkan</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
+                      {copiedKey === 'sha256-hash' ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span>Tersalin</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Salin Hash</span>
+                        </>
+                      )}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleResetForm}
-                    className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors"
-                  >
-                    Unggah Rilis Baru Lainnya
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 1: TERMINAL CLI SCRIPT GENERATOR (RECOMMENDED / OFFICIAL) */}
-      {publishMode === 'cli' && (
-        <div className="space-y-6">
-          {/* Step 1: File & Version Selector for CLI */}
-          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6">
-            <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Terminal className="w-5 h-5 text-indigo-400" />
-                  <h3 className="text-base font-bold text-white">GitHub CLI Release Builder (Rekomendasi Utama)</h3>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    Recommended / Default
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  Upload binary installer langsung dari terminal lokal Owner ke GitHub Releases tanpa batas ukuran memori browser/cloud, lalu sinkronkan metadata ke Supabase dengan 1-klik.
-                </p>
-              </div>
-            </div>
-
-            {/* 1. Pilih Aplikasi */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
-                <span>1. Pilih Aplikasi Ekosistem:</span>
-                {selectedApp && (
-                  <span className="text-[11px] text-slate-400 font-normal">
-                    App ID: <span className="font-mono text-indigo-400 font-bold">{selectedApp.appId || selectedApp.id}</span>
-                  </span>
-                )}
-              </label>
-              <select
-                value={selectedAppId}
-                onChange={(e) => handleSelectApp(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-hidden focus:border-indigo-500"
-              >
-                {apps.map((app) => (
-                  <option key={app.id} value={app.appId || app.id}>
-                    {app.name} ({app.appId || app.id}) • Versi Cloud: v{app.latestVersion || app.version} • {app.published ? 'Published' : 'Draft'}
-                  </option>
-                ))}
-              </select>
-
-              {selectedApp && (
-                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
-                  <div>
-                    <span className="text-slate-500 block">Kategori Pack:</span>
-                    <span className="font-medium text-slate-300">{selectedApp.packId}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Versi Saat Ini:</span>
-                    <span className="font-mono font-bold text-slate-300">v{selectedApp.version}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Latest Cloud Version:</span>
-                    <span className="font-mono font-bold text-emerald-400">v{selectedApp.latestVersion || selectedApp.version}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block">Status Publikasi:</span>
-                    <span className={`font-semibold ${selectedApp.published ? 'text-emerald-400' : 'text-amber-400'}`}>
-                      {selectedApp.published ? 'Published' : 'Draft Only'}
-                    </span>
                   </div>
                 </div>
-              )}
-            </div>
 
-            {/* 2. File & SHA-256 (Optional / Local calculation) */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
-                <span>2. Pilih File Installer (.exe) untuk Hitung SHA-256 Otomatis (Opsional):</span>
-                {isCalculatingHash && (
-                  <span className="text-xs text-indigo-400 flex items-center gap-1">
-                    <RotateCw className="w-3 h-3 animate-spin" /> Menghitung hash...
-                  </span>
-                )}
-              </label>
-              <div
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all ${
-                  selectedFile
-                    ? 'border-emerald-500/50 bg-emerald-950/10'
-                    : 'border-slate-800 hover:border-indigo-500/50 bg-slate-950/40 hover:bg-slate-950/80'
-                }`}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".exe"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-                {selectedFile ? (
-                  <div className="flex items-center justify-between gap-3 text-left">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                        <FileCode className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-bold text-white truncate">{selectedFile.name}</h4>
-                        <p className="text-[11px] text-slate-400">
-                          {Math.round((selectedFile.size / 1024 / 1024) * 100) / 100} MB ({selectedFile.size.toLocaleString()} bytes)
-                        </p>
-                      </div>
-                    </div>
-                    {precomputedSha256 && (
-                      <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-mono text-[10px] hidden sm:block">
-                        SHA-256 Terverifikasi
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-400">
-                    Klik atau seret file <code className="text-indigo-300 font-mono">.exe</code> ke sini untuk otomatis mengisi nama file & menghitung SHA-256
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* 3. Versioning & Bump */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <label className="text-xs font-bold text-slate-300">
-                  3. Nomor Versi Rilis Baru (SemVer):
-                </label>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-slate-500 mr-1">Quick Bump:</span>
-                  <button
-                    type="button"
-                    onClick={() => handleApplyBump('patch')}
-                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-mono text-slate-300"
-                  >
-                    +Patch (0.0.1)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleApplyBump('minor')}
-                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-mono text-slate-300"
-                  >
-                    +Minor (0.1.0)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleApplyBump('major')}
-                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-mono text-slate-300"
-                  >
-                    +Major (1.0.0)
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Verified Download URL */}
                 <div className="space-y-1">
-                  <input
-                    type="text"
-                    placeholder="Contoh: 0.1.1"
-                    value={versionInput}
-                    onChange={(e) => setVersionInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-white focus:outline-hidden focus:border-indigo-500"
-                    required
-                  />
-                  <p className="text-[11px] text-slate-500">
-                    Versi Cloud Saat Ini: <strong className="text-indigo-400 font-mono">v{currentAppLatest}</strong>
-                  </p>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-indigo-300 truncate select-all">
-                    Tag: {expectedTag}
+                  <span className="text-[11px] text-slate-400 block font-semibold">
+                    Official GitHub Releases Asset URL:
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={uploadProgress.releaseData.downloadUrl}
+                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-mono text-indigo-300 focus:outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(uploadProgress.releaseData!.downloadUrl, 'download-url')}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1.5 transition-colors shrink-0"
+                    >
+                      {copiedKey === 'download-url' ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span>Tersalin</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Salin URL</span>
+                        </>
+                      )}
+                    </button>
                   </div>
-                  <p className="text-[11px] text-slate-500">
-                    Target Repo: <span className="text-slate-400 font-semibold">{ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}</span>
-                  </p>
                 </div>
-              </div>
-            </div>
 
-            {/* 4. Release Notes */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-300">
-                4. Catatan Rilis (Changelog):
-              </label>
-              <textarea
-                rows={3}
-                placeholder="Jelaskan fitur baru atau perbaikan pada rilis ini..."
-                value={releaseNotesInput}
-                onChange={(e) => setReleaseNotesInput(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs text-white focus:outline-hidden focus:border-indigo-500 leading-relaxed font-sans"
-              />
-            </div>
-          </div>
-
-          {/* Step 2: Generated Command */}
-          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                  <Terminal className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white">Generated GitHub CLI Command</h4>
-                  <p className="text-[11px] text-slate-400">Jalankan perintah ini di Command Prompt / Terminal lokal tempat file installer berada.</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleCopy(cliData.cliCommand, 'gh-cli')}
-                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
-              >
-                {copiedKey === 'gh-cli' ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-300" />
-                    <span>Perintah Tersalin!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Salin Perintah CLI</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="relative">
-              <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-400 whitespace-pre-wrap break-all select-all leading-relaxed">
-                {cliData.cliCommand}
-              </pre>
-            </div>
-
-            {precomputedSha256 && (
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1 text-xs">
-                <span className="text-slate-400 font-semibold block text-[11px]">Precomputed SHA-256:</span>
-                <p className="font-mono text-emerald-400 text-xs select-all break-all">{precomputedSha256}</p>
-              </div>
-            )}
-          </div>
-
-          {/* Step 3: 1-Click Sync Metadata to Supabase */}
-          <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-indigo-500/30 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white">Sinkronisasi Metadata ke Supabase (Setelah Upload CLI Selesai)</h4>
+                {/* Footer Controls */}
+                <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80">
                   <p className="text-[11px] text-slate-400">
-                    Setelah menjalankan perintah <code className="text-emerald-300 font-mono">gh release create</code> di atas, klik tombol di bawah untuk mencatat URL unduhan & SHA-256 ke katalog Supabase.
+                    Status Katalog:{' '}
+                    <span className={selectedApp.published ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                      {selectedApp.published ? 'Published (Semua pengguna ALCO Hub menerima update ini)' : 'Draft (Belum dibuka ke publik)'}
+                    </span>
                   </p>
+
+                  <div className="flex items-center gap-2">
+                    {onNavigateToTab && !selectedApp.published && (
+                      <button
+                        type="button"
+                        onClick={() => onNavigateToTab('apps')}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all shadow-xs"
+                      >
+                        <span>Buka Katalog & Terbitkan</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleResetForm}
+                      className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors"
+                    >
+                      Rilis Aplikasi Lainnya
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-slate-500 block text-[11px]">Download URL Otomatis:</span>
-                <p className="font-mono text-indigo-300 text-[11px] truncate select-all">
-                  https://github.com/{ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}/releases/download/{expectedTag}/{selectedFile?.name || `${canonicalAppId}-Setup.exe`}
-                </p>
-              </div>
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-slate-500 block text-[11px]">SHA-256 Checksum:</span>
-                <p className="font-mono text-emerald-400 text-[11px] truncate select-all">
-                  {customSha256Input || precomputedSha256 || '(Akan dikosongkan jika belum dihitung)'}
-                </p>
-              </div>
-            </div>
-
-            {syncResultMsg && (
-              <div
-                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
-                  syncResultMsg.type === 'success'
-                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
-                    : 'bg-rose-500/10 border-rose-500/20 text-rose-300'
-                }`}
-              >
-                {syncResultMsg.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                ) : (
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                )}
-                <span>{syncResultMsg.message}</span>
-              </div>
             )}
-
-            <button
-              type="button"
-              onClick={handleSyncCliMetadata}
-              disabled={isSyncingMetadata || !versionInput.trim()}
-              className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs tracking-wide uppercase transition-all shadow-lg shadow-indigo-600/20 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {isSyncingMetadata ? (
-                <>
-                  <RotateCw className="w-4 h-4 animate-spin" />
-                  <span>Menyinkronkan ke Supabase public.apps...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  <span>Simpan Metadata Rilis v{normalizeVersion(versionInput || '0.1.0')} ke Supabase</span>
-                </>
-              )}
-            </button>
-          </div>
         </div>
       )}
 
-      {/* TAB 2: DIRECT IN-APP UPLOAD FORM (ADVANCED / EXPERIMENTAL) */}
-      {publishMode === 'direct' && (
+      {/* MODE 1: ONE-CLICK UI RELEASE (DEFAULT & OFFICIAL WORKFLOW) */}
+      {publishMode === 'one-click' && (
         <form
-          onSubmit={handleStartRelease}
-          className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6"
+          onSubmit={handleOneClickPublish}
+          className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6 shadow-lg"
         >
-          {/* Advanced Warning Header */}
-          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-1">
-            <div className="font-bold flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Mode Langsung Browser (Advanced / Experimental)</span>
+          <div className="border-b border-slate-800 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <Zap className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-base font-bold text-white">One-Click Release Publisher</h3>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                  Automated Transaction
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Pilih aplikasi dan installer .exe. ALCO Hub akan mengunggah binary ke GitHub Releases dan menyinkronkan Supabase secara otomatis.
+              </p>
             </div>
-            <p className="text-[11px] text-amber-200/90 leading-relaxed">
-              Mode ini mengunggah file .exe langsung dari browser ke GitHub Releases API menggunakan GitHub PAT di sesi browser. Untuk file berukuran sangat besar (&gt;100MB) atau koneksi lambat, <strong>GitHub CLI Mode</strong> lebih disarankan.
-            </p>
-          </div>
-
-          <div className="border-b border-slate-800 pb-4">
-            <h3 className="text-base font-bold text-white">Formulir Direct In-App Release Stream</h3>
-            <p className="text-xs text-slate-400">
-              Pilih file installer, nomor versi, dan catatan rilis. Binary .exe di-stream langsung ke GitHub Releases CDN.
-            </p>
           </div>
 
           {/* 1. Pilih Aplikasi */}
@@ -1136,18 +1179,14 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
               <span>1. Pilih Aplikasi Ekosistem:</span>
               {selectedApp && (
                 <span className="text-[11px] text-slate-400 font-normal">
-                  App ID:{' '}
-                  <span className="font-mono text-indigo-400 font-bold">
-                    {selectedApp.appId || selectedApp.id}
-                  </span>
+                  App ID: <span className="font-mono text-indigo-400 font-bold">{selectedApp.appId || selectedApp.id}</span>
                 </span>
               )}
             </label>
             <select
-              id="release-app-select"
               value={selectedAppId}
               onChange={(e) => handleSelectApp(e.target.value)}
-              disabled={isUploading}
+              disabled={isWorking}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-hidden focus:border-indigo-500 disabled:opacity-50"
             >
               {apps.map((app) => (
@@ -1158,7 +1197,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
             </select>
 
             {selectedApp && (
-              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
+              <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
                 <div>
                   <span className="text-slate-500 block">Kategori Pack:</span>
                   <span className="font-medium text-slate-300">{selectedApp.packId}</span>
@@ -1169,17 +1208,11 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                 </div>
                 <div>
                   <span className="text-slate-500 block">Latest Cloud Version:</span>
-                  <span className="font-mono font-bold text-emerald-400">
-                    v{selectedApp.latestVersion || selectedApp.version}
-                  </span>
+                  <span className="font-mono font-bold text-emerald-400">v{selectedApp.latestVersion || selectedApp.version}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block">Status Publikasi:</span>
-                  <span
-                    className={`font-semibold ${
-                      selectedApp.published ? 'text-emerald-400' : 'text-amber-400'
-                    }`}
-                  >
+                  <span className={`font-semibold ${selectedApp.published ? 'text-emerald-400' : 'text-amber-400'}`}>
                     {selectedApp.published ? 'Published' : 'Draft Only'}
                   </span>
                 </div>
@@ -1189,45 +1222,64 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
 
           {/* 2. Pilih File Installer .exe */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-300">
-              2. File Installer Windows (.exe):
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-300">
+                2. File Installer Windows (.exe):
+              </label>
+              {isElectron && (
+                <button
+                  type="button"
+                  onClick={handlePickNativeFile}
+                  disabled={isWorking}
+                  className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold inline-flex items-center gap-1"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>Jelajahi File Komputer</span>
+                </button>
+              )}
+            </div>
+
             <div
               onDragOver={handleDragOver}
               onDrop={handleDrop}
-              onClick={() => !isUploading && fileInputRef.current?.click()}
+              onClick={() => !isWorking && handlePickNativeFile()}
               className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
-                selectedFile
+                selectedFileName
                   ? 'border-emerald-500/50 bg-emerald-950/10'
                   : 'border-slate-800 hover:border-indigo-500/50 bg-slate-950/40 hover:bg-slate-950/80'
-              } ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${isWorking ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <input
                 ref={fileInputRef}
                 type="file"
                 accept=".exe"
                 onChange={handleFileChange}
-                disabled={isUploading}
+                disabled={isWorking}
                 className="hidden"
               />
 
-              {selectedFile ? (
+              {selectedFileName ? (
                 <div className="space-y-2">
                   <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
                     <FileCode className="w-6 h-6" />
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-white">{selectedFile.name}</h4>
+                    <h4 className="text-sm font-bold text-white">{selectedFileName}</h4>
                     <p className="text-xs text-slate-400">
-                      Ukuran File:{' '}
+                      Ukuran:{' '}
                       <span className="font-mono font-semibold text-slate-300">
-                        {Math.round((selectedFile.size / 1024 / 1024) * 100) / 100} MB
+                        {Math.round((selectedFileSize / 1024 / 1024) * 100) / 100} MB
                       </span>{' '}
-                      ({selectedFile.size.toLocaleString()} bytes)
+                      ({selectedFileSize.toLocaleString()} bytes)
                     </p>
+                    {selectedFilePath && (
+                      <p className="text-[11px] font-mono text-slate-500 truncate max-w-xl mx-auto mt-1">
+                        Jalur: {selectedFilePath}
+                      </p>
+                    )}
                   </div>
                   <p className="text-[11px] text-emerald-400 font-medium">
-                    Klik atau drop file lain untuk mengganti
+                    Klik untuk memilih installer lain
                   </p>
                 </div>
               ) : (
@@ -1237,10 +1289,9 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-white">
-                      Tarik dan lepas file installer .exe di sini, atau{' '}
-                      <span className="text-indigo-400 underline">Pilih File</span>
+                      Klik untuk memilih file installer .exe, atau seret & lepas file ke sini
                     </h4>
-                    <p className="text-[11px] text-slate-500">
+                    <p className="text-[11px] text-slate-500 mt-0.5">
                       Hanya file executable installer Windows (.exe) yang didukung.
                     </p>
                   </div>
@@ -1261,7 +1312,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                 <div className="flex items-center justify-between text-[11px]">
                   <span className="font-semibold text-slate-400 flex items-center gap-1">
                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    Pre-Calculated SHA-256 (Keamanan Terverifikasi):
+                    SHA-256 Checksum (Integritas Terverifikasi):
                   </span>
                   <button
                     type="button"
@@ -1288,39 +1339,38 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
             )}
           </div>
 
-          {/* 3. Konfigurasi Versi & Release Notes */}
+          {/* 3. Konfigurasi Versi & GitHub Release Tag */}
           <div className="space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                <span>3. Nomor Versi Rilis (Semantic Versioning):</span>
+              <label className="text-xs font-bold text-slate-300">
+                3. Nomor Versi Rilis Baru (Semantic Versioning):
               </label>
-              {/* Quick Semver Bump Actions */}
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-slate-500 flex items-center gap-1">
                   <Wand2 className="w-3 h-3 text-indigo-400" />
-                  Saran Otomatis:
+                  Quick Bump:
                 </span>
                 <button
                   type="button"
                   onClick={() => handleApplyBump('patch')}
+                  disabled={isWorking}
                   className="px-2 py-1 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 text-[10px] font-bold font-mono transition-colors"
-                  title="Naikkan Patch (+0.0.1) untuk perbaikan bug / update kecil"
                 >
                   + Patch ({bumpPatch(currentAppLatest)})
                 </button>
                 <button
                   type="button"
                   onClick={() => handleApplyBump('minor')}
+                  disabled={isWorking}
                   className="px-2 py-1 rounded-md bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 text-[10px] font-bold font-mono transition-colors"
-                  title="Naikkan Minor (+0.1.0) untuk penambahan fitur baru"
                 >
                   + Minor ({bumpMinor(currentAppLatest)})
                 </button>
                 <button
                   type="button"
                   onClick={() => handleApplyBump('major')}
+                  disabled={isWorking}
                   className="px-2 py-1 rounded-md bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/20 text-[10px] font-bold font-mono transition-colors"
-                  title="Naikkan Major (+1.0.0) untuk perubahan besar"
                 >
                   + Major ({bumpMajor(currentAppLatest)})
                 </button>
@@ -1329,36 +1379,24 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <div className="relative">
-                  <input
-                    id="release-version-input"
-                    type="text"
-                    placeholder="contoh: 0.1.1"
-                    value={versionInput}
-                    onChange={(e) => setVersionInput(e.target.value)}
-                    disabled={isUploading}
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono focus:outline-hidden focus:border-indigo-500 disabled:opacity-50"
-                  />
-                </div>
+                <input
+                  type="text"
+                  placeholder="contoh: 1.0.1"
+                  value={versionInput}
+                  onChange={(e) => setVersionInput(e.target.value)}
+                  disabled={isWorking}
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono focus:outline-hidden focus:border-indigo-500 disabled:opacity-50"
+                />
                 <p className="text-[11px] text-slate-500 flex items-center justify-between">
-                  <span>Format semver standar (major.minor.patch).</span>
+                  <span>Format semver (major.minor.patch)</span>
                   <span className="text-slate-400">Versi Cloud: <strong className="text-indigo-400 font-mono">v{currentAppLatest}</strong></span>
                 </p>
-                {isVersionConflictWarning && (
-                  <p className="text-[11px] text-amber-400 font-medium flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>Versi harus lebih tinggi dari v{currentAppLatest} untuk mencegah konflik tag GitHub.</span>
-                  </p>
-                )}
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[11px] font-semibold text-slate-400">
-                  GitHub Release Tag (Otomatis & Read-Only):
-                </label>
                 <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-indigo-300 truncate select-all">
-                  {expectedTag}
+                  GitHub Tag: {expectedTag}
                 </div>
                 <p className="text-[11px] text-slate-500">
                   Judul Rilis: <span className="text-slate-400 font-semibold">{expectedReleaseName}</span>
@@ -1367,40 +1405,168 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
             </div>
           </div>
 
-          {/* Release Notes */}
+          {/* 4. Release Notes */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-slate-300">
               4. Catatan Rilis (Changelog):
             </label>
             <textarea
-              id="release-notes-input"
-              rows={4}
+              rows={3}
               placeholder="Jelaskan fitur baru, perbaikan bug, atau peningkatan performa pada versi ini..."
               value={releaseNotesInput}
               onChange={(e) => setReleaseNotesInput(e.target.value)}
-              disabled={isUploading}
+              disabled={isWorking}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs text-white focus:outline-hidden focus:border-indigo-500 disabled:opacity-50 leading-relaxed font-sans"
             />
           </div>
 
-          {/* Action Button */}
+          {/* Publish Action Button */}
           <button
-            id="submit-upload-release-btn"
             type="submit"
-            disabled={isUploading || !selectedFile || !versionInput.trim()}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-extrabold text-xs tracking-wide uppercase transition-all shadow-lg shadow-indigo-600/20 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            disabled={isWorking || (!selectedFileName && !selectedFile) || !versionInput.trim()}
+            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 hover:from-indigo-500 hover:to-indigo-400 text-white font-extrabold text-xs tracking-wide uppercase transition-all shadow-lg shadow-indigo-600/25 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {isUploading ? (
+            {isWorking ? (
               <>
                 <RotateCw className="w-4 h-4 animate-spin" />
                 <span>Memproses Rilis ({uploadProgress.progressPercent}%)...</span>
               </>
             ) : (
               <>
-                <UploadCloud className="w-4 h-4" />
-                <span>Publikasikan Rilis ke GitHub & Supabase ({expectedTag})</span>
+                <Zap className="w-4 h-4" />
+                <span>Publish Release ({expectedTag})</span>
               </>
             )}
+          </button>
+        </form>
+      )}
+
+      {/* MODE 2: ADVANCED TOOLS -> MANUAL GITHUB CLI */}
+      {publishMode === 'manual-cli' && (
+        <div className="space-y-6">
+          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+            <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Terminal className="w-5 h-5 text-indigo-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Manual GitHub CLI Script Generator</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Opsi manual untuk menjalankan perintah rilis di terminal eksternal Owner jika diperlukan.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="relative">
+              <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-400 whitespace-pre-wrap break-all select-all leading-relaxed">
+                {cliData.cliCommand}
+              </pre>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-[11px] text-slate-400 font-mono">Tag: {expectedTag}</span>
+              <button
+                type="button"
+                onClick={() => handleCopy(cliData.cliCommand, 'gh-cli')}
+                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
+              >
+                {copiedKey === 'gh-cli' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-300" />
+                    <span>Perintah Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Salin Perintah CLI</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Step 2 in Manual Mode: Sync Metadata */}
+          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-indigo-400" />
+              <h4 className="text-xs font-bold text-white">Manual Supabase Metadata Sync</h4>
+            </div>
+            <p className="text-xs text-slate-400">
+              Setelah selesai menjalankan script CLI di terminal, klik tombol di bawah untuk menyinkronkan metadata ke Supabase.
+            </p>
+
+            {manualSyncResultMsg && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                  manualSyncResultMsg.type === 'success'
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                    : 'bg-rose-500/10 border-rose-500/20 text-rose-300'
+                }`}
+              >
+                {manualSyncResultMsg.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span>{manualSyncResultMsg.message}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleManualCliSync}
+              disabled={isSyncingManualMetadata || !versionInput.trim()}
+              className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-2"
+            >
+              {isSyncingManualMetadata ? (
+                <>
+                  <RotateCw className="w-4 h-4 animate-spin" />
+                  <span>Menyinkronkan ke Supabase...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Simpan Metadata Rilis v{normalizeVersion(versionInput || '0.1.0')} ke Supabase</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODE 3: ADVANCED TOOLS -> DIRECT PAT IN-APP STREAM */}
+      {publishMode === 'direct-pat' && (
+        <form
+          onSubmit={handleDirectPatPublish}
+          className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6"
+        >
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-1">
+            <div className="font-bold flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Direct In-App Stream (Browser HTTP Upload via PAT)</span>
+            </div>
+            <p className="text-[11px] text-amber-200/90 leading-relaxed">
+              Mode alternatif menggunakan GitHub Personal Access Token (PAT) di sesi browser untuk mengunggah file.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-300">GitHub Personal Access Token (PAT):</label>
+            <input
+              type="password"
+              value={ghConfig.token}
+              onChange={(e) => setGhConfig({ ...ghConfig, token: e.target.value })}
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-white focus:outline-hidden focus:border-indigo-500"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isWorking || !selectedFile || !versionInput.trim() || !ghConfig.token.trim()}
+            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wide transition-all disabled:opacity-50"
+          >
+            Upload via Direct PAT Stream
           </button>
         </form>
       )}

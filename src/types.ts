@@ -152,11 +152,75 @@ export interface AdminAuthSession {
 export type ReleaseUploadStatus =
   | 'idle'
   | 'preparing'
-  | 'uploading'
+  | 'calculating_sha'
   | 'creating_release'
+  | 'uploading'
+  | 'verifying'
+  | 'syncing_metadata'
   | 'updating_catalog'
+  | 'published'
   | 'completed'
   | 'failed';
+
+export interface GhCliStatus {
+  installed: boolean;
+  authenticated: boolean;
+  version: string | null;
+  account: string | null;
+  error?: string;
+}
+
+export interface NativeFileSelection {
+  canceled: boolean;
+  filePath?: string;
+  fileName?: string;
+  fileSize?: number;
+  error?: string;
+}
+
+export interface OneClickPublishParams {
+  appId: string;
+  appName: string;
+  version: string;
+  filePath: string;
+  releaseNotes?: string;
+  repoOwner?: string;
+  repoName?: string;
+}
+
+export interface OneClickPublishData {
+  appId: string;
+  appName: string;
+  version: string;
+  tag: string;
+  releaseName: string;
+  downloadUrl: string;
+  sha256: string;
+  fileName: string;
+  fileSize: number;
+  htmlUrl: string;
+  repoSlug: string;
+  releaseNotes: string;
+}
+
+export interface OneClickPublishResult {
+  success: boolean;
+  data?: OneClickPublishData;
+  step?: ReleaseUploadStatus;
+  error?: string;
+}
+
+export interface OneClickPublishProgressEvent {
+  step: ReleaseUploadStatus;
+  progressPercent: number;
+  message: string;
+  sha256?: string;
+  fileName?: string;
+  fileSize?: number;
+  tag?: string;
+  error?: string;
+  releaseData?: OneClickPublishData;
+}
 
 export interface ReleaseUploadProgress {
   status: ReleaseUploadStatus;
@@ -175,6 +239,7 @@ export interface ReleaseUploadProgress {
     sha256: string;
     htmlUrl?: string;
     fileName?: string;
+    fileSize?: number;
     published?: boolean;
   };
 }
@@ -238,6 +303,11 @@ declare global {
       }) => Promise<InstallResult>;
       onInstallProgress: (callback: (data: AppInstallProgress) => void) => () => void;
       checkContentEngineUpdate?: () => Promise<ContentEngineUpdateResult>;
+      selectInstallerFile?: () => Promise<NativeFileSelection>;
+      calculateFileHash?: (filePath: string) => Promise<{ success: boolean; sha256?: string; error?: string }>;
+      checkGhCliStatus?: () => Promise<GhCliStatus>;
+      publishReleaseGhCli?: (params: OneClickPublishParams) => Promise<OneClickPublishResult>;
+      onReleasePublishProgress?: (callback: (data: OneClickPublishProgressEvent) => void) => () => void;
     };
   }
 }

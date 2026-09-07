@@ -36,4 +36,16 @@ contextBridge.exposeInMainWorld('alcoHub', {
     };
   },
   checkContentEngineUpdate: () => ipcRenderer.invoke('check-content-engine-update'),
+  selectInstallerFile: () => ipcRenderer.invoke('select-installer-file'),
+  calculateFileHash: (filePath) => ipcRenderer.invoke('calculate-file-hash', filePath),
+  checkGhCliStatus: () => ipcRenderer.invoke('check-gh-cli-status'),
+  publishReleaseGhCli: (params) => ipcRenderer.invoke('publish-release-gh-cli', params),
+  onReleasePublishProgress: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('release-publish-progress', listener);
+    return () => {
+      ipcRenderer.removeListener('release-publish-progress', listener);
+    };
+  },
 });

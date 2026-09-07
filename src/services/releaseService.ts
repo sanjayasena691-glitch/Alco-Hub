@@ -564,3 +564,255 @@ export async function syncCliReleaseToSupabase({
     };
   }
 }
+
+export interface OneClickReleaseOptions {
+  app: EcosystemApp;
+  version: string;
+  filePath: string;
+  fileName?: string;
+  releaseNotes?: string;
+  repoOwner?: string;
+  repoName?: string;
+  onProgress: (progress: ReleaseUploadProgress) => void;
+}
+
+export interface OneClickReleaseResult {
+  success: boolean;
+  stage: 'completed' | 'supabase_sync_failed' | 'github_failed';
+  data?: any;
+  updatedApp?: EcosystemApp;
+  message: string;
+  error?: string;
+}
+
+/**
+ * Eksekusi One-Click Release Pipeline melalui Electron Main Process GitHub CLI & Auto-Sync Supabase
+ */
+export async function executeOneClickRelease({
+  app,
+  version,
+  filePath,
+  fileName,
+  releaseNotes,
+  repoOwner = DEFAULT_GITHUB_REPO_OWNER,
+  repoName = DEFAULT_GITHUB_REPO_NAME,
+  onProgress,
+}: OneClickReleaseOptions): Promise<OneClickReleaseResult> {
+  const cleanAppId = (app.appId || app.id)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-');
+  const cleanVersion = version.replace(/^v/i, '').trim() || '1.0.0';
+  const cleanNotes = (releaseNotes?.trim() || `Rilis resmi ${app.name} versi v${cleanVersion}.`);
+
+  if (!window.alcoHub?.publishReleaseGhCli) {
+    const errorMsg = 'Fitur One-Click Release membutuhkan aplikasi desktop ALCO Hub (Electron runtime). Di lingkungan web browser, silakan gunakan menu Advanced Tools -> Manual GitHub CLI.';
+    onProgress({
+      status: 'failed',
+      progressPercent: 0,
+      bytesUploaded: 0,
+      totalBytes: 0,
+      currentStepMessage: 'Electron runtime tidak tersedia.',
+      error: errorMsg,
+    });
+    return {
+      success: false,
+      stage: 'github_failed',
+      message: errorMsg,
+      error: errorMsg,
+    };
+  }
+
+  // Setup unlistener for IPC progress
+  let cleanupProgressListener: (() => void) | null = null;
+  if (typeof window.alcoHub?.onReleasePublishProgress === 'function') {
+    cleanupProgressListener = window.alcoHub.onReleasePublishProgress((event) => {
+      onProgress({
+        status: event.step,
+        progressPercent: event.progressPercent,
+        bytesUploaded: 0,
+        totalBytes: event.fileSize || 0,
+        currentStepMessage: event.message,
+        sha256: event.sha256,
+        error: event.error,
+        releaseData: event.releaseData
+          ? {
+              appId: event.releaseData.appId,
+              version: event.releaseData.version,
+              tag: event.releaseData.tag,
+              releaseName: event.releaseData.releaseName,
+              downloadUrl: event.releaseData.downloadUrl,
+              sha256: event.releaseData.sha256,
+              htmlUrl: event.releaseData.htmlUrl,
+              fileName: event.releaseData.fileName,
+              fileSize: event.releaseData.fileSize,
+              published: app.published,
+            }
+          : undefined,
+      });
+    });
+  }
+
+  try {
+    // 1. Jalankan proses One-Click GitHub CLI di Main Process
+    onProgress({
+      status: 'preparing',
+      progressPercent: 5,
+      bytesUploaded: 0,
+      totalBytes: 0,
+      currentStepMessage: 'Menghubungkan ke GitHub CLI di mesin Owner...',
+    });
+
+    const result = await window.alcoHub.publishReleaseGhCli({
+      appId: cleanAppId,
+      appName: app.name,
+      version: cleanVersion,
+      filePath,
+      releaseNotes: cleanNotes,
+      repoOwner,
+      repoName,
+    });
+
+    if (cleanupProgressListener) {
+      cleanupProgressListener();
+    }
+
+    if (!result.success || !result.data) {
+      const errorMsg = result.error || 'Gagal mempublikasikan release melalui GitHub CLI.';
+      onProgress({
+        status: 'failed',
+        progressPercent: 0,
+        bytesUploaded: 0,
+        totalBytes: 0,
+        currentStepMessage: 'Publikasi ke GitHub gagal.',
+        error: errorMsg,
+      });
+      return {
+        success: false,
+        stage: 'github_failed',
+        message: errorMsg,
+        error: errorMsg,
+      };
+    }
+
+    const ghData = result.data;
+
+    // 2. Step Otomatis: Sync Metadata ke Supabase
+    onProgress({
+      status: 'syncing_metadata',
+      progressPercent: 92,
+      bytesUploaded: ghData.fileSize || 0,
+      totalBytes: ghData.fileSize || 0,
+      currentStepMessage: 'Binary berhasil diunggah ke GitHub! Menyinkronkan metadata ke Supabase public.apps...',
+      sha256: ghData.sha256,
+      releaseData: {
+        appId: ghData.appId,
+        version: ghData.version,
+        tag: ghData.tag,
+        releaseName: ghData.releaseName,
+        downloadUrl: ghData.downloadUrl,
+        sha256: ghData.sha256,
+        htmlUrl: ghData.htmlUrl,
+        fileName: ghData.fileName,
+        fileSize: ghData.fileSize,
+        published: app.published,
+      },
+    });
+
+    const updatedApp: EcosystemApp = {
+      ...app,
+      latestVersion: ghData.version,
+      downloadUrl: ghData.downloadUrl,
+      sha256: ghData.sha256,
+      releaseNotes: cleanNotes,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const cloudSaveRes = await saveAppToCloud(updatedApp, false);
+
+    if (cloudSaveRes.success) {
+      const successMsg = `Rilis resmi ${app.name} v${ghData.version} berhasil dipublikasikan ke GitHub Releases dan Supabase!`;
+      onProgress({
+        status: 'published',
+        progressPercent: 100,
+        bytesUploaded: ghData.fileSize || 0,
+        totalBytes: ghData.fileSize || 0,
+        currentStepMessage: 'Release berhasil dipublikasikan & metadata Supabase aktif!',
+        sha256: ghData.sha256,
+        releaseData: {
+          appId: ghData.appId,
+          version: ghData.version,
+          tag: ghData.tag,
+          releaseName: ghData.releaseName,
+          downloadUrl: ghData.downloadUrl,
+          sha256: ghData.sha256,
+          htmlUrl: ghData.htmlUrl,
+          fileName: ghData.fileName,
+          fileSize: ghData.fileSize,
+          published: app.published,
+        },
+      });
+
+      return {
+        success: true,
+        stage: 'completed',
+        data: ghData,
+        updatedApp,
+        message: successMsg,
+      };
+    } else {
+      // Supabase failed, but GitHub binary is intact
+      const failMsg = cloudSaveRes.message || 'Gagal menyimpan metadata ke Supabase.';
+      onProgress({
+        status: 'syncing_metadata',
+        progressPercent: 92,
+        bytesUploaded: ghData.fileSize || 0,
+        totalBytes: ghData.fileSize || 0,
+        currentStepMessage: 'Binary berhasil di GitHub, metadata belum tersinkron.',
+        error: failMsg,
+        sha256: ghData.sha256,
+        releaseData: {
+          appId: ghData.appId,
+          version: ghData.version,
+          tag: ghData.tag,
+          releaseName: ghData.releaseName,
+          downloadUrl: ghData.downloadUrl,
+          sha256: ghData.sha256,
+          htmlUrl: ghData.htmlUrl,
+          fileName: ghData.fileName,
+          fileSize: ghData.fileSize,
+          published: app.published,
+        },
+      });
+
+      return {
+        success: false,
+        stage: 'supabase_sync_failed',
+        data: ghData,
+        updatedApp,
+        message: 'Binary berhasil di GitHub, metadata belum tersinkron.',
+        error: failMsg,
+      };
+    }
+  } catch (err) {
+    if (cleanupProgressListener) {
+      cleanupProgressListener();
+    }
+    const errorMsg = err instanceof Error ? err.message : 'Terjadi kesalahan sistem saat One-Click Release.';
+    onProgress({
+      status: 'failed',
+      progressPercent: 0,
+      bytesUploaded: 0,
+      totalBytes: 0,
+      currentStepMessage: 'Proses rilis terhenti.',
+      error: errorMsg,
+    });
+    return {
+      success: false,
+      stage: 'github_failed',
+      message: errorMsg,
+      error: errorMsg,
+    };
+  }
+}

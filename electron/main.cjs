@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -820,6 +820,412 @@ ipcMain.handle('check-content-engine-update', async () => {
       localVersionSource: localVersion.source,
       executablePath,
       registryUrl: CONTENT_ENGINE_REGISTRY_URL,
+    };
+  }
+});
+
+// ==========================================
+// 5. ONE-CLICK GITHUB CLI RELEASE PUBLISHER (OWNER ENGINE)
+// ==========================================
+
+/**
+ * Executes a GitHub CLI (gh) command with structured arguments.
+ * Uses child_process.spawn to avoid shell string injection vulnerabilities.
+ * @param {string[]} args
+ * @param {object} [options]
+ * @returns {Promise<{ code: number, stdout: string, stderr: string, error?: Error }>}
+ */
+function execGhCommand(args, options = {}) {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn('gh', args, {
+        windowsHide: true,
+        shell: process.platform === 'win32',
+        ...options,
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      if (proc.stdout) {
+        proc.stdout.on('data', (data) => {
+          const str = data.toString();
+          stdout += str;
+          if (typeof options.onStdout === 'function') options.onStdout(str);
+        });
+      }
+
+      if (proc.stderr) {
+        proc.stderr.on('data', (data) => {
+          const str = data.toString();
+          stderr += str;
+          if (typeof options.onStderr === 'function') options.onStderr(str);
+        });
+      }
+
+      proc.on('error', (err) => {
+        resolve({
+          code: -1,
+          stdout: stdout.trim(),
+          stderr: (stderr || err.message).trim(),
+          error: err,
+        });
+      });
+
+      proc.on('close', (code) => {
+        resolve({
+          code: code ?? 0,
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+        });
+      });
+    } catch (err) {
+      resolve({
+        code: -1,
+        stdout: '',
+        stderr: err.message,
+        error: err,
+      });
+    }
+  });
+}
+
+/**
+ * Calculates SHA-256 of a local file via Node stream.
+ * @param {string} filePath
+ * @returns {Promise<string>}
+ */
+function calculateSha256ForFile(filePath) {
+  return new Promise((resolve, reject) => {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return reject(new Error(`File installer tidak ditemukan di jalur: ${filePath}`));
+    }
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex').toLowerCase()));
+    stream.on('error', (err) => reject(err));
+  });
+}
+
+// IPC: Native File Picker for Installer (.exe)
+ipcMain.handle('select-installer-file', async () => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: 'Pilih File Installer ALCO (.exe)',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Windows Executable Installer', extensions: ['exe'] },
+        { name: 'Semua File', extensions: ['*'] },
+      ],
+    });
+
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    const selectedPath = result.filePaths[0];
+    if (!fs.existsSync(selectedPath)) {
+      return { canceled: true, error: 'File yang dipilih tidak ditemukan di disk.' };
+    }
+
+    const stat = fs.statSync(selectedPath);
+    return {
+      canceled: false,
+      filePath: selectedPath,
+      fileName: path.basename(selectedPath),
+      fileSize: stat.size,
+    };
+  } catch (err) {
+    return {
+      canceled: true,
+      error: err instanceof Error ? err.message : 'Gagal membuka dialog pemilihan file.',
+    };
+  }
+});
+
+// IPC: Calculate File SHA-256 Checksum on demand
+ipcMain.handle('calculate-file-hash', async (_event, filePath) => {
+  try {
+    if (!filePath || typeof filePath !== 'string') {
+      return { success: false, error: 'Jalur file tidak valid.' };
+    }
+    const hash = await calculateSha256ForFile(filePath);
+    return { success: true, sha256: hash };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Gagal menghitung SHA-256 hash.',
+    };
+  }
+});
+
+// IPC: Check GitHub CLI status (installed and authenticated)
+ipcMain.handle('check-gh-cli-status', async () => {
+  // 1. Check gh installation
+  const versionRes = await execGhCommand(['--version']);
+  if (versionRes.code !== 0 || versionRes.error) {
+    return {
+      installed: false,
+      authenticated: false,
+      version: null,
+      account: null,
+      error: 'GitHub CLI (gh) belum terpasang di komputer ini. Silakan pasang dari https://cli.github.com atau buka terminal dan jalankan "winget install GitHub.cli".',
+    };
+  }
+
+  const versionMatch = versionRes.stdout.match(/gh version ([0-9.]+)/i);
+  const ghVersion = versionMatch ? versionMatch[1] : 'installed';
+
+  // 2. Check gh authentication status
+  const authRes = await execGhCommand(['auth', 'status']);
+  const isAuthOk = authRes.code === 0;
+
+  // Extract account name if possible
+  const combinedOutput = `${authRes.stdout}\n${authRes.stderr}`;
+  const accountMatch = combinedOutput.match(/Logged in to [^\s]+ account ([^\s(]+)/i) || combinedOutput.match(/account ([a-zA-Z0-9_-]+)/i);
+  const account = accountMatch ? accountMatch[1] : null;
+
+  if (!isAuthOk) {
+    return {
+      installed: true,
+      authenticated: false,
+      version: ghVersion,
+      account: null,
+      error: 'GitHub CLI belum login ke akun GitHub. Silakan buka Terminal / PowerShell dan jalankan "gh auth login" untuk mengautentikasi.',
+    };
+  }
+
+  return {
+    installed: true,
+    authenticated: true,
+    version: ghVersion,
+    account: account || 'Active Session',
+  };
+});
+
+// IPC: One-Click GitHub CLI Release Publisher Transaction
+ipcMain.handle('publish-release-gh-cli', async (event, params) => {
+  const sendProgress = (step, progressPercent, message, extra = {}) => {
+    try {
+      if (event.sender && !event.sender.isDestroyed()) {
+        event.sender.send('release-publish-progress', {
+          step,
+          progressPercent,
+          message,
+          ...extra,
+        });
+      }
+    } catch {}
+  };
+
+  try {
+    const {
+      appId,
+      appName,
+      version,
+      filePath,
+      releaseNotes,
+      repoOwner = 'yaladzan92-creator',
+      repoName = 'Alco-Releases',
+    } = params || {};
+
+    // 1. Input Sanitization & Verification
+    if (!filePath || typeof filePath !== 'string' || !fs.existsSync(filePath)) {
+      return {
+        success: false,
+        step: 'failed',
+        error: `File installer tidak ditemukan di komputer: ${filePath || '(kosong)'}`,
+      };
+    }
+
+    if (!filePath.toLowerCase().endsWith('.exe')) {
+      return {
+        success: false,
+        step: 'failed',
+        error: 'File yang dipilih harus berupa file executable installer Windows (.exe).',
+      };
+    }
+
+    const cleanAppId = (appId || 'app')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    const cleanVersion = (version || '1.0.0').toString().trim().replace(/^v/i, '').replace(/[^0-9.]/g, '') || '1.0.0';
+    const cleanRepoOwner = (repoOwner || 'yaladzan92-creator').trim().replace(/[^a-zA-Z0-9_.-]/g, '');
+    const cleanRepoName = (repoName || 'Alco-Releases').trim().replace(/[^a-zA-Z0-9_.-]/g, '');
+    const repoSlug = `${cleanRepoOwner}/${cleanRepoName}`;
+
+    const tagName = `${cleanAppId}-v${cleanVersion}`;
+    const releaseTitle = `${appName || cleanAppId} v${cleanVersion}`;
+    const cleanNotes = (releaseNotes || `Rilis resmi ${appName || cleanAppId} v${cleanVersion} didistribusikan melalui ALCO Hub.`).trim();
+    const fileName = path.basename(filePath);
+    const fileStat = fs.statSync(filePath);
+
+    // Step 1: Preparing & Checking GitHub CLI
+    sendProgress('preparing', 10, 'Memeriksa ketersediaan & status login GitHub CLI di sistem...', {
+      tag: tagName,
+      fileName,
+    });
+
+    const versionCheck = await execGhCommand(['--version']);
+    if (versionCheck.code !== 0 || versionCheck.error) {
+      const errorMsg = 'GitHub CLI (gh) belum terpasang di komputer ini. Silakan pasang dari https://cli.github.com atau jalankan "winget install GitHub.cli" di PowerShell.';
+      sendProgress('failed', 0, errorMsg, { error: errorMsg });
+      return { success: false, step: 'preparing', error: errorMsg };
+    }
+
+    const authCheck = await execGhCommand(['auth', 'status']);
+    if (authCheck.code !== 0) {
+      const errorMsg = 'GitHub CLI belum login ke akun GitHub. Silakan buka Terminal / PowerShell dan jalankan "gh auth login" terlebih dahulu.';
+      sendProgress('failed', 0, errorMsg, { error: errorMsg });
+      return { success: false, step: 'preparing', error: errorMsg };
+    }
+
+    // Step 2: Calculating SHA-256 Hash
+    sendProgress('calculating_sha', 25, 'Menghitung & memvalidasi SHA-256 Checksum file installer lokal...');
+    let sha256 = '';
+    try {
+      sha256 = await calculateSha256ForFile(filePath);
+    } catch (hashErr) {
+      const errorMsg = `Gagal menghitung SHA-256 hash: ${hashErr.message}`;
+      sendProgress('failed', 0, errorMsg, { error: errorMsg });
+      return { success: false, step: 'calculating_sha', error: errorMsg };
+    }
+
+    sendProgress('calculating_sha', 40, 'SHA-256 Checksum terverifikasi.', { sha256 });
+
+    // Step 3: Check & Create GitHub Release
+    sendProgress('creating_release', 50, `Memeriksa status rilis "${tagName}" di GitHub repo ${repoSlug}...`, { sha256 });
+
+    const checkReleaseRes = await execGhCommand([
+      'release',
+      'view',
+      tagName,
+      '--repo',
+      repoSlug,
+      '--json',
+      'tagName,name,url,assets',
+    ]);
+
+    let releaseExists = checkReleaseRes.code === 0;
+
+    if (!releaseExists) {
+      sendProgress('creating_release', 60, `Membuat GitHub Release baru "${releaseTitle}" (${tagName})...`, { sha256 });
+      const createRes = await execGhCommand([
+        'release',
+        'create',
+        tagName,
+        '--repo',
+        repoSlug,
+        '--title',
+        releaseTitle,
+        '--notes',
+        cleanNotes,
+      ]);
+
+      if (createRes.code !== 0) {
+        // If create failed because release was created concurrently or already exists, double check
+        const retryView = await execGhCommand(['release', 'view', tagName, '--repo', repoSlug]);
+        if (retryView.code !== 0) {
+          const errorMsg = `Gagal membuat GitHub Release: ${createRes.stderr || 'Koneksi GitHub gagal'}`;
+          sendProgress('failed', 0, errorMsg, { error: errorMsg, sha256 });
+          return { success: false, step: 'creating_release', error: errorMsg };
+        }
+      }
+    } else {
+      sendProgress('creating_release', 60, `Release "${tagName}" sudah ada di GitHub. Melanjutkan upload installer...`, { sha256 });
+    }
+
+    // Step 4: Upload Installer (.exe) with --clobber
+    sendProgress('uploading', 70, `Mengunggah installer ${fileName} (${Math.round((fileStat.size / 1024 / 1024) * 10) / 10} MB) ke GitHub Releases...`, {
+      sha256,
+      fileName,
+      fileSize: fileStat.size,
+    });
+
+    const uploadRes = await execGhCommand([
+      'release',
+      'upload',
+      tagName,
+      filePath,
+      '--repo',
+      repoSlug,
+      '--clobber',
+    ]);
+
+    if (uploadRes.code !== 0) {
+      const errorMsg = `Gagal mengunggah binary installer ke GitHub Releases: ${uploadRes.stderr || 'Koneksi terputus'}`;
+      sendProgress('failed', 0, errorMsg, { error: errorMsg, sha256 });
+      return { success: false, step: 'uploading', error: errorMsg };
+    }
+
+    // Step 5: Verifying Asset on GitHub
+    sendProgress('verifying', 90, 'Memverifikasi asset rilis di GitHub Releases CDN...', { sha256 });
+
+    const finalViewRes = await execGhCommand([
+      'release',
+      'view',
+      tagName,
+      '--repo',
+      repoSlug,
+      '--json',
+      'tagName,name,url,assets',
+    ]);
+
+    let finalHtmlUrl = `https://github.com/${repoSlug}/releases/tag/${encodeURIComponent(tagName)}`;
+    let officialDownloadUrl = `https://github.com/${repoSlug}/releases/download/${encodeURIComponent(tagName)}/${encodeURIComponent(fileName)}`;
+
+    if (finalViewRes.code === 0 && finalViewRes.stdout) {
+      try {
+        const viewData = JSON.parse(finalViewRes.stdout);
+        if (viewData.url) finalHtmlUrl = viewData.url;
+        if (Array.isArray(viewData.assets)) {
+          const matchedAsset = viewData.assets.find(
+            (a) => a.name && a.name.toLowerCase() === fileName.toLowerCase()
+          );
+          if (matchedAsset && (matchedAsset.url || matchedAsset.browser_download_url)) {
+            // Note: `gh release view --json assets` returns `url` or `apiUrl`
+            if (matchedAsset.browser_download_url) {
+              officialDownloadUrl = matchedAsset.browser_download_url;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    const payload = {
+      appId: cleanAppId,
+      appName: appName || cleanAppId,
+      version: cleanVersion,
+      tag: tagName,
+      releaseName: releaseTitle,
+      downloadUrl: officialDownloadUrl,
+      sha256,
+      fileName,
+      fileSize: fileStat.size,
+      htmlUrl: finalHtmlUrl,
+      repoSlug,
+      releaseNotes: cleanNotes,
+    };
+
+    sendProgress('verifying', 100, 'Binary installer berhasil diunggah & diverifikasi di GitHub Releases!', {
+      sha256,
+      releaseData: payload,
+    });
+
+    return {
+      success: true,
+      data: payload,
+    };
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Terjadi kesalahan sistem saat proses publikasi rilis.';
+    sendProgress('failed', 0, errorMsg, { error: errorMsg });
+    return {
+      success: false,
+      step: 'failed',
+      error: errorMsg,
     };
   }
 });
