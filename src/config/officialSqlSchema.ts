@@ -1,4 +1,9 @@
--- ==============================================================================
+/**
+ * ALCO Hub - Single Source of Truth for Official Supabase Database Schema
+ * Versi: 2.1 (Dynamic Product Packs, Access Model, Trial Duration & Owner RLS)
+ */
+
+export const OFFICIAL_SUPABASE_SCHEMA_V2_1 = `-- ==============================================================================
 -- OFFICIAL SUPABASE SCHEMA v2.1 - ALCO HUB (Aladzan Corpora)
 -- Dynamic Product Packs, Access Model, Trial Metadata & Hardened Owner RLS
 -- ==============================================================================
@@ -162,8 +167,8 @@ CREATE POLICY "Owners have full access to product packs" ON public.product_packs
 DROP POLICY IF EXISTS "Public users can view published apps" ON public.apps;
 CREATE POLICY "Public users can view published apps" ON public.apps 
     FOR SELECT TO anon, authenticated USING (published = true OR EXISTS (
-        SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
-    );
+        SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner'
+    ));
 
 DROP POLICY IF EXISTS "Owners have full access to apps" ON public.apps;
 CREATE POLICY "Owners have full access to apps" ON public.apps 
@@ -192,3 +197,4 @@ CREATE POLICY "Owners update alco_contact" ON public.alco_contact
 DROP POLICY IF EXISTS "Users can read own admin role" ON public.admin_users;
 CREATE POLICY "Users can read own admin role" ON public.admin_users 
     FOR SELECT TO authenticated USING (user_id = auth.uid());
+`;
