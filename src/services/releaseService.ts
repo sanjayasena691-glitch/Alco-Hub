@@ -504,3 +504,63 @@ export function generateGhCliCommand({
     title,
   };
 }
+
+/**
+ * 1-Click Sync Metadata Supabase setelah rilis via GitHub CLI berhasil
+ */
+export async function syncCliReleaseToSupabase({
+  app,
+  version,
+  fileName,
+  sha256,
+  releaseNotes,
+  repoOwner,
+  repoName,
+}: {
+  app: EcosystemApp;
+  version: string;
+  fileName: string;
+  sha256: string;
+  releaseNotes?: string;
+  repoOwner?: string;
+  repoName?: string;
+}): Promise<{ success: boolean; message: string; updatedApp?: EcosystemApp }> {
+  const cleanAppId = (app.appId || app.id)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-');
+  const cleanVersion = version.replace(/^v/i, '').trim();
+  const tagName = `${cleanAppId}-v${cleanVersion}`;
+  const owner = repoOwner || DEFAULT_GITHUB_REPO_OWNER;
+  const repo = repoName || DEFAULT_GITHUB_REPO_NAME;
+  
+  // Format standar GitHub Releases direct asset download URL
+  const officialDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${encodeURIComponent(tagName)}/${encodeURIComponent(fileName)}`;
+  const cleanNotes = releaseNotes?.trim() || `Rilis resmi ${app.name} versi v${cleanVersion}.`;
+
+  const updatedApp: EcosystemApp = {
+    ...app,
+    latestVersion: cleanVersion,
+    downloadUrl: officialDownloadUrl,
+    sha256: sha256.trim().toLowerCase(),
+    releaseNotes: cleanNotes,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const cloudSaveRes = await saveAppToCloud(updatedApp, false);
+
+  if (cloudSaveRes.success) {
+    return {
+      success: true,
+      message: `Metadata rilis v${cleanVersion} (${app.name}) berhasil disinkronkan ke Supabase!`,
+      updatedApp,
+    };
+  } else {
+    return {
+      success: false,
+      message: cloudSaveRes.message || 'Gagal menyimpan metadata ke Supabase.',
+      updatedApp,
+    };
+  }
+}

@@ -44,6 +44,7 @@ import {
   saveGitHubPublishConfig,
   clearGitHubPublishConfig,
   generateGhCliCommand,
+  syncCliReleaseToSupabase,
   GitHubPublishConfig,
   DEFAULT_GITHUB_REPO_OWNER,
   DEFAULT_GITHUB_REPO_NAME,
@@ -71,13 +72,13 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
   onCatalogUpdated,
   onNavigateToTab,
 }) => {
-  // Mode Tab: In-App Direct Upload vs Terminal CLI Script
-  const [publishMode, setPublishMode] = useState<'direct' | 'cli'>('direct');
+  // Mode Tab: Terminal CLI Script (RECOMMENDED/Default) vs Direct PAT Upload (Advanced)
+  const [publishMode, setPublishMode] = useState<'cli' | 'direct'>('cli');
 
   // GitHub Config State (Owner Session)
   const [ghConfig, setGhConfig] = useState<GitHubPublishConfig>(getGitHubPublishConfig);
   const [showGhToken, setShowGhToken] = useState(false);
-  const [showGhSettings, setShowGhSettings] = useState(!ghConfig.token);
+  const [showGhSettings, setShowGhSettings] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
   // Selection & Input States
@@ -88,6 +89,12 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
   const [isCalculatingHash, setIsCalculatingHash] = useState(false);
   const [precomputedSha256, setPrecomputedSha256] = useState<string>('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Metadata Sync State (for CLI workflow)
+  const [isSyncingMetadata, setIsSyncingMetadata] = useState(false);
+  const [syncResultMsg, setSyncResultMsg] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [customDownloadUrlInput, setCustomDownloadUrlInput] = useState<string>('');
+  const [customSha256Input, setCustomSha256Input] = useState<string>('');
 
   // Upload Progress State
   const [uploadProgress, setUploadProgress] = useState<ReleaseUploadProgress>({
@@ -295,6 +302,52 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     }
   };
 
+  // Handler: 1-Click Sync Metadata Supabase setelah rilis via CLI sukses
+  const handleSyncCliMetadata = async () => {
+    if (!adminSession.isAuthenticated || adminSession.role !== 'owner') {
+      alert('Akses Ditolak: Anda harus login sebagai Owner untuk memperbarui Supabase.');
+      return;
+    }
+
+    if (!selectedApp) {
+      alert('Pilih aplikasi terlebih dahulu.');
+      return;
+    }
+
+    const cleanVer = normalizeVersion(versionInput);
+    if (!cleanVer) {
+      alert('Nomor versi tidak valid.');
+      return;
+    }
+
+    const finalFileName = selectedFile?.name || `${canonicalAppId}-Setup.exe`;
+    const finalSha256 = customSha256Input.trim() || precomputedSha256 || '';
+
+    setIsSyncingMetadata(true);
+    setSyncResultMsg(null);
+
+    const res = await syncCliReleaseToSupabase({
+      app: selectedApp,
+      version: cleanVer,
+      fileName: finalFileName,
+      sha256: finalSha256,
+      releaseNotes: releaseNotesInput,
+      repoOwner: ghConfig.owner,
+      repoName: ghConfig.repo,
+    });
+
+    setIsSyncingMetadata(false);
+
+    if (res.success && res.updatedApp) {
+      setSyncResultMsg({ type: 'success', message: res.message });
+      const targetId = selectedApp.appId || selectedApp.id;
+      const updatedList = apps.map((a) => ((a.appId && a.appId === targetId) || a.id === targetId ? res.updatedApp! : a));
+      onCatalogUpdated(updatedList);
+    } else {
+      setSyncResultMsg({ type: 'error', message: res.message });
+    }
+  };
+
   const isUploading =
     uploadProgress.status === 'preparing' ||
     uploadProgress.status === 'uploading' ||
@@ -479,20 +532,8 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
         </form>
       )}
 
-      {/* Mode Selector: Direct Upload vs CLI Terminal */}
+      {/* Mode Selector: CLI Terminal (RECOMMENDED/Default) vs Direct PAT Upload (Advanced) */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-        <button
-          type="button"
-          onClick={() => setPublishMode('direct')}
-          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-            publishMode === 'direct'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'text-slate-400 hover:text-white bg-slate-900/50'
-          }`}
-        >
-          <UploadCloud className="w-3.5 h-3.5" />
-          <span>Direct In-App Publisher (1-Click)</span>
-        </button>
         <button
           type="button"
           onClick={() => setPublishMode('cli')}
@@ -503,7 +544,26 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
           }`}
         >
           <Terminal className="w-3.5 h-3.5" />
-          <span>GitHub CLI Script Generator (Terminal)</span>
+          <span>GitHub CLI Script Generator (RECOMMENDED / Default)</span>
+          <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+            Official
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setPublishMode('direct')}
+          className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+            publishMode === 'direct'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'text-slate-400 hover:text-white bg-slate-900/50'
+          }`}
+        >
+          <UploadCloud className="w-3.5 h-3.5" />
+          <span>Direct In-App Stream (Advanced / PAT Session)</span>
+          <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-slate-800 text-slate-400 border border-slate-700">
+            Experimental
+          </span>
         </button>
       </div>
 
@@ -738,14 +798,333 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
         </div>
       )}
 
-      {/* TAB 1: DIRECT IN-APP UPLOAD FORM */}
+      {/* TAB 1: TERMINAL CLI SCRIPT GENERATOR (RECOMMENDED / OFFICIAL) */}
+      {publishMode === 'cli' && (
+        <div className="space-y-6">
+          {/* Step 1: File & Version Selector for CLI */}
+          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6">
+            <div className="border-b border-slate-800 pb-4 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-5 h-5 text-indigo-400" />
+                  <h3 className="text-base font-bold text-white">GitHub CLI Release Builder (Rekomendasi Utama)</h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    Recommended / Default
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Upload binary installer langsung dari terminal lokal Owner ke GitHub Releases tanpa batas ukuran memori browser/cloud, lalu sinkronkan metadata ke Supabase dengan 1-klik.
+                </p>
+              </div>
+            </div>
+
+            {/* 1. Pilih Aplikasi */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                <span>1. Pilih Aplikasi Ekosistem:</span>
+                {selectedApp && (
+                  <span className="text-[11px] text-slate-400 font-normal">
+                    App ID: <span className="font-mono text-indigo-400 font-bold">{selectedApp.appId || selectedApp.id}</span>
+                  </span>
+                )}
+              </label>
+              <select
+                value={selectedAppId}
+                onChange={(e) => handleSelectApp(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-hidden focus:border-indigo-500"
+              >
+                {apps.map((app) => (
+                  <option key={app.id} value={app.appId || app.id}>
+                    {app.name} ({app.appId || app.id}) • Versi Cloud: v{app.latestVersion || app.version} • {app.published ? 'Published' : 'Draft'}
+                  </option>
+                ))}
+              </select>
+
+              {selectedApp && (
+                <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">
+                  <div>
+                    <span className="text-slate-500 block">Kategori Pack:</span>
+                    <span className="font-medium text-slate-300">{selectedApp.packId}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Versi Saat Ini:</span>
+                    <span className="font-mono font-bold text-slate-300">v{selectedApp.version}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Latest Cloud Version:</span>
+                    <span className="font-mono font-bold text-emerald-400">v{selectedApp.latestVersion || selectedApp.version}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Status Publikasi:</span>
+                    <span className={`font-semibold ${selectedApp.published ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {selectedApp.published ? 'Published' : 'Draft Only'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2. File & SHA-256 (Optional / Local calculation) */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                <span>2. Pilih File Installer (.exe) untuk Hitung SHA-256 Otomatis (Opsional):</span>
+                {isCalculatingHash && (
+                  <span className="text-xs text-indigo-400 flex items-center gap-1">
+                    <RotateCw className="w-3 h-3 animate-spin" /> Menghitung hash...
+                  </span>
+                )}
+              </label>
+              <div
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all ${
+                  selectedFile
+                    ? 'border-emerald-500/50 bg-emerald-950/10'
+                    : 'border-slate-800 hover:border-indigo-500/50 bg-slate-950/40 hover:bg-slate-950/80'
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".exe"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                {selectedFile ? (
+                  <div className="flex items-center justify-between gap-3 text-left">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                        <FileCode className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white truncate">{selectedFile.name}</h4>
+                        <p className="text-[11px] text-slate-400">
+                          {Math.round((selectedFile.size / 1024 / 1024) * 100) / 100} MB ({selectedFile.size.toLocaleString()} bytes)
+                        </p>
+                      </div>
+                    </div>
+                    {precomputedSha256 && (
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-mono text-[10px] hidden sm:block">
+                        SHA-256 Terverifikasi
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400">
+                    Klik atau seret file <code className="text-indigo-300 font-mono">.exe</code> ke sini untuk otomatis mengisi nama file & menghitung SHA-256
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* 3. Versioning & Bump */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <label className="text-xs font-bold text-slate-300">
+                  3. Nomor Versi Rilis Baru (SemVer):
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-slate-500 mr-1">Quick Bump:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyBump('patch')}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-mono text-slate-300"
+                  >
+                    +Patch (0.0.1)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyBump('minor')}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-mono text-slate-300"
+                  >
+                    +Minor (0.1.0)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyBump('major')}
+                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] font-mono text-slate-300"
+                  >
+                    +Major (1.0.0)
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <input
+                    type="text"
+                    placeholder="Contoh: 0.1.1"
+                    value={versionInput}
+                    onChange={(e) => setVersionInput(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-white focus:outline-hidden focus:border-indigo-500"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Versi Cloud Saat Ini: <strong className="text-indigo-400 font-mono">v{currentAppLatest}</strong>
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-indigo-300 truncate select-all">
+                    Tag: {expectedTag}
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Target Repo: <span className="text-slate-400 font-semibold">{ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* 4. Release Notes */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-300">
+                4. Catatan Rilis (Changelog):
+              </label>
+              <textarea
+                rows={3}
+                placeholder="Jelaskan fitur baru atau perbaikan pada rilis ini..."
+                value={releaseNotesInput}
+                onChange={(e) => setReleaseNotesInput(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs text-white focus:outline-hidden focus:border-indigo-500 leading-relaxed font-sans"
+              />
+            </div>
+          </div>
+
+          {/* Step 2: Generated Command */}
+          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                  <Terminal className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white">Generated GitHub CLI Command</h4>
+                  <p className="text-[11px] text-slate-400">Jalankan perintah ini di Command Prompt / Terminal lokal tempat file installer berada.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleCopy(cliData.cliCommand, 'gh-cli')}
+                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
+              >
+                {copiedKey === 'gh-cli' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-300" />
+                    <span>Perintah Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Salin Perintah CLI</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="relative">
+              <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-400 whitespace-pre-wrap break-all select-all leading-relaxed">
+                {cliData.cliCommand}
+              </pre>
+            </div>
+
+            {precomputedSha256 && (
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1 text-xs">
+                <span className="text-slate-400 font-semibold block text-[11px]">Precomputed SHA-256:</span>
+                <p className="font-mono text-emerald-400 text-xs select-all break-all">{precomputedSha256}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Step 3: 1-Click Sync Metadata to Supabase */}
+          <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-indigo-500/30 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white">Sinkronisasi Metadata ke Supabase (Setelah Upload CLI Selesai)</h4>
+                  <p className="text-[11px] text-slate-400">
+                    Setelah menjalankan perintah <code className="text-emerald-300 font-mono">gh release create</code> di atas, klik tombol di bawah untuk mencatat URL unduhan & SHA-256 ke katalog Supabase.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-slate-500 block text-[11px]">Download URL Otomatis:</span>
+                <p className="font-mono text-indigo-300 text-[11px] truncate select-all">
+                  https://github.com/{ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}/releases/download/{expectedTag}/{selectedFile?.name || `${canonicalAppId}-Setup.exe`}
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-slate-500 block text-[11px]">SHA-256 Checksum:</span>
+                <p className="font-mono text-emerald-400 text-[11px] truncate select-all">
+                  {customSha256Input || precomputedSha256 || '(Akan dikosongkan jika belum dihitung)'}
+                </p>
+              </div>
+            </div>
+
+            {syncResultMsg && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                  syncResultMsg.type === 'success'
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                    : 'bg-rose-500/10 border-rose-500/20 text-rose-300'
+                }`}
+              >
+                {syncResultMsg.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span>{syncResultMsg.message}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSyncCliMetadata}
+              disabled={isSyncingMetadata || !versionInput.trim()}
+              className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs tracking-wide uppercase transition-all shadow-lg shadow-indigo-600/20 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {isSyncingMetadata ? (
+                <>
+                  <RotateCw className="w-4 h-4 animate-spin" />
+                  <span>Menyinkronkan ke Supabase public.apps...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Simpan Metadata Rilis v{normalizeVersion(versionInput || '0.1.0')} ke Supabase</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: DIRECT IN-APP UPLOAD FORM (ADVANCED / EXPERIMENTAL) */}
       {publishMode === 'direct' && (
         <form
           onSubmit={handleStartRelease}
           className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6"
         >
+          {/* Advanced Warning Header */}
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-1">
+            <div className="font-bold flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Mode Langsung Browser (Advanced / Experimental)</span>
+            </div>
+            <p className="text-[11px] text-amber-200/90 leading-relaxed">
+              Mode ini mengunggah file .exe langsung dari browser ke GitHub Releases API menggunakan GitHub PAT di sesi browser. Untuk file berukuran sangat besar (&gt;100MB) atau koneksi lambat, <strong>GitHub CLI Mode</strong> lebih disarankan.
+            </p>
+          </div>
+
           <div className="border-b border-slate-800 pb-4">
-            <h3 className="text-base font-bold text-white">Formulir Publikasi Rilis Resmi (Direct Stream)</h3>
+            <h3 className="text-base font-bold text-white">Formulir Direct In-App Release Stream</h3>
             <p className="text-xs text-slate-400">
               Pilih file installer, nomor versi, dan catatan rilis. Binary .exe di-stream langsung ke GitHub Releases CDN.
             </p>
@@ -1024,69 +1403,6 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
             )}
           </button>
         </form>
-      )}
-
-      {/* TAB 2: TERMINAL CLI SCRIPT GENERATOR */}
-      {publishMode === 'cli' && (
-        <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6">
-          <div className="border-b border-slate-800 pb-4">
-            <div className="flex items-center gap-2">
-              <Terminal className="w-5 h-5 text-indigo-400" />
-              <h3 className="text-base font-bold text-white">Owner CLI / Terminal Release Helper</h3>
-            </div>
-            <p className="text-xs text-slate-400 mt-1">
-              Jika Anda lebih menyukai publikasi melalui Command Prompt / PowerShell / GitHub CLI di komputer lokal Owner, gunakan perintah siap pakai di bawah ini.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-300">1. Perintah GitHub CLI (gh):</label>
-              <div className="relative">
-                <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-400 whitespace-pre-wrap break-all select-all">
-                  {cliData.cliCommand}
-                </pre>
-                <button
-                  type="button"
-                  onClick={() => handleCopy(cliData.cliCommand, 'gh-cli')}
-                  className="absolute right-3 top-3 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                >
-                  {copiedKey === 'gh-cli' ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Tersalin</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Salin Script CLI</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {precomputedSha256 && (
-              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1 text-xs">
-                <span className="text-slate-400 font-semibold block">Precomputed SHA-256:</span>
-                <p className="font-mono text-emerald-400 select-all">{precomputedSha256}</p>
-              </div>
-            )}
-
-            <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-400 space-y-2">
-              <h4 className="font-bold text-white flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                Langkah Cepat via Terminal:
-              </h4>
-              <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-400">
-                <li>Buka terminal di folder tempat file installer <code className="text-indigo-300 font-mono">{cliData.tag}</code> berada.</li>
-                <li>Jalankan perintah <code className="text-emerald-300 font-mono">gh auth login</code> (jika belum login di GitHub CLI).</li>
-                <li>Salin dan jalankan perintah <code className="text-emerald-300 font-mono">gh release create ...</code> di atas.</li>
-                <li>Setelah rilis terbuat di GitHub, buka tab <strong>Manual Metadata Updater</strong> di ALCO Hub untuk menyimpan URL unduhan dan SHA-256 ke Supabase jika diperlukan.</li>
-              </ol>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

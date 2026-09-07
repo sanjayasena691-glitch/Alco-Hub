@@ -1,17 +1,17 @@
 /**
- * ALCO Hub - Supabase Edge Function: publish-release
+ * ALCO Hub - Supabase Edge Function: publish-release [DEPRECATED / LEGACY]
  * 
- * Secure Server-Side GitHub Release Publisher & Catalog Updater
+ * CATATAN ARSITEKTUR RESMI:
+ * Fungsi ini ditandai sebagai DEPRECATED untuk pengunggahan binary installer (.exe) besar.
+ * Pengunggahan binary besar melalui Edge Function menyebabkan HTTP 546 (Memory limit exceeded)
+ * pada Deno Deploy runtime.
  * 
- * ALUR & KEAMANAN:
- * 1. Memverifikasi JWT Supabase Auth pengirim request
- * 2. Memeriksa tabel public.admin_users untuk memastikan user memiliki role 'owner'
- * 3. Membaca GITHUB_TOKEN & konfigurasi repositori dari Supabase Edge Function Secrets
- * 4. Membuat GitHub Tag & Release resmi (format: {app_id}-v{version})
- * 5. Mengunggah file installer .exe sebagai release asset ke GitHub Releases
- * 6. Mengambil URL unduhan resmi (browser_download_url) dari GitHub
- * 7. Memperbarui tabel public.apps (latest_version, download_url, sha256, release_notes, updated_at)
- * 8. Mengembalikan ringkasan rilis tanpa pernah membocorkan token GitHub ke client
+ * Jalur Rilis Resmi ALCO Hub:
+ * 1. Mode Recommended (Default): GitHub CLI (gh release create) via komputer Owner
+ * 2. Mode Direct Stream (Advanced): Direct upload dari browser/desktop Owner ke GitHub Releases API
+ * 3. Supabase Catalog: Metadata (latest_version, download_url, sha256, release_notes) disimpan ke tabel public.apps
+ * 
+ * File ini dipertahankan sebagai legacy reference dan TIDAK DIGUNAKAN lagi oleh Release Manager ALCO Hub.
  */
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
