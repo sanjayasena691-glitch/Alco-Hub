@@ -5,6 +5,7 @@
 
 import {
   EcosystemApp,
+  EcosystemPack,
   UserLicense,
   ContactAlcoConfig,
   SyncMeta,
@@ -12,12 +13,15 @@ import {
   ProductAccent,
   ProductIconName,
   PricingType,
+  AccessModel,
   AppStatus,
 } from '../types';
 import { ECOSYSTEM_APPS as DEFAULT_APPS } from '../config/ecosystemApps';
+import { ECOSYSTEM_PACKS as DEFAULT_PACKS } from '../config/ecosystemPacks';
 import { getSupabase, isSupabaseConfigured } from './supabaseClient';
 
 const STORAGE_KEY_CATALOG_CACHE = 'alco_hub_catalog_cache_v2';
+const STORAGE_KEY_PACKS_CACHE = 'alco_hub_packs_cache_v2';
 const STORAGE_KEY_SYNC_META = 'alco_hub_sync_meta_v2';
 const STORAGE_KEY_USER_LICENSES = 'alco_hub_user_licenses_v2';
 const STORAGE_KEY_CONTACT_CONFIG = 'alco_hub_contact_config_v2';
@@ -36,6 +40,7 @@ export const DEFAULT_CONTACT_CONFIG: ContactAlcoConfig = {
  * Cache in-memory untuk mencegah duplicate sync dalam satu render/sesi
  */
 let inMemoryCatalog: EcosystemApp[] | null = null;
+let inMemoryPacks: EcosystemPack[] | null = null;
 let inMemorySyncMeta: SyncMeta = {
   status: 'idle',
   lastSyncedAt: null,
@@ -44,13 +49,15 @@ let inMemorySyncMeta: SyncMeta = {
 let isSyncInProgress = false;
 
 // ==============================================================================
-// 1. DATA MAPPING (SUPABASE DB ROW <-> REACT EcosystemApp)
+// 1. DATA MAPPING (SUPABASE DB ROW <-> REACT EcosystemApp & EcosystemPack)
 // ==============================================================================
 
 function mapDbRowToApp(row: any): EcosystemApp {
   const isComingSoon = Boolean(row.coming_soon ?? row.pricing_type === 'coming-soon');
-  const pricingType = (row.pricing_type || (isComingSoon ? 'coming-soon' : 'licensed')) as PricingType;
+  const rawPricing = row.pricing_type || (isComingSoon ? 'coming-soon' : 'licensed');
+  const pricingType = (rawPricing === 'trial' ? 'trial' : rawPricing) as PricingType;
   const appId = row.app_id || row.id;
+  const trialDays = typeof row.trial_duration_days === 'number' ? row.trial_duration_days : (pricingType === 'trial' ? 14 : undefined);
 
   return {
     id: appId, // app_id sebagai identifier logis utama
@@ -63,7 +70,9 @@ function mapDbRowToApp(row: any): EcosystemApp {
     accent: (row.accent || 'purple') as ProductAccent,
     iconName: (row.icon_name || 'target') as ProductIconName,
     pricingType,
-    priceLabel: row.price_label || (pricingType === 'free' ? 'FREE' : 'Rp 499.000 / Lifetime'),
+    accessModel: pricingType as AccessModel,
+    trialDurationDays: trialDays,
+    priceLabel: row.price_label || (pricingType === 'free' ? 'FREE' : (pricingType === 'trial' ? `Trial ${trialDays || 14} Hari` : 'Rp 499.000 / Lifetime')),
     currency: 'IDR',
     published: row.published !== false,
     publishedAt: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '2026-09-01',
@@ -86,7 +95,7 @@ function mapAppToDbRow(app: EcosystemApp): any {
 
   // JANGAN kirim id string ke kolom id UUID.
   // Gunakan app_id sebagai unique business identifier untuk onConflict.
-  return {
+  const payload: any = {
     app_id: appId,
     name: app.name,
     short_name: app.shortName || app.name,
@@ -104,6 +113,45 @@ function mapAppToDbRow(app: EcosystemApp): any {
     sha256: app.sha256 || null,
     accent: app.accent || 'purple',
     icon_name: app.iconName || 'target',
+    updated_at: new Date().toISOString(),
+  };
+
+  if (typeof app.trialDurationDays === 'number' || app.pricingType === 'trial') {
+    payload.trial_duration_days = app.trialDurationDays || 14;
+  }
+
+  return payload;
+}
+
+function mapDbRowToPack(row: any): EcosystemPack {
+  return {
+    id: row.id || row.pack_id,
+    name: row.name || 'Custom Pack',
+    tagline: row.tagline || '',
+    description: row.description || '',
+    category: row.category || 'Specialized Product Pack',
+    accent: (row.accent || 'purple') as ProductAccent,
+    badge: row.badge || undefined,
+    status: (row.status === 'coming-soon' ? 'coming-soon' : 'active'),
+    toolCount: typeof row.tool_count === 'number' ? row.tool_count : 0,
+    isCustom: Boolean(row.is_custom),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapPackToDbRow(pack: EcosystemPack): any {
+  return {
+    id: pack.id,
+    name: pack.name,
+    tagline: pack.tagline || '',
+    description: pack.description || '',
+    category: pack.category || 'Specialized Product Pack',
+    accent: pack.accent || 'purple',
+    badge: pack.badge || null,
+    status: pack.status || 'active',
+    tool_count: pack.toolCount || 0,
+    is_custom: true,
     updated_at: new Date().toISOString(),
   };
 }
@@ -146,6 +194,169 @@ export function saveCatalogToCache(apps: EcosystemApp[]): void {
     localStorage.setItem(STORAGE_KEY_CATALOG_CACHE, JSON.stringify(apps));
   } catch (err) {
     console.error('[ALCO Hub] Failed to write catalog to cache:', err);
+  }
+}
+
+/**
+ * Membaca daftar Product Packs dari cache lokal (Fallback instan ke DEFAULT_PACKS)
+ */
+export function getCachedPacks(): EcosystemPack[] {
+  if (inMemoryPacks && inMemoryPacks.length > 0) {
+    return inMemoryPacks;
+  }
+
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PACKS_CACHE);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        inMemoryPacks = parsed;
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('[ALCO Hub] Failed to read cached packs:', err);
+  }
+
+  inMemoryPacks = DEFAULT_PACKS;
+  return DEFAULT_PACKS;
+}
+
+/**
+ * Menyimpan Product Packs ke cache lokal
+ */
+export function savePacksToCache(packs: EcosystemPack[]): void {
+  try {
+    inMemoryPacks = packs;
+    localStorage.setItem(STORAGE_KEY_PACKS_CACHE, JSON.stringify(packs));
+  } catch (err) {
+    console.error('[ALCO Hub] Failed to write packs to cache:', err);
+  }
+}
+
+/**
+ * Sinkronisasi Product Packs dari Supabase (public.product_packs)
+ * Fallback aman ke DEFAULT_PACKS jika tabel belum ada atau koneksi offline.
+ */
+export async function syncProductPacksWithSupabase(): Promise<EcosystemPack[]> {
+  const client = getSupabase();
+  if (!client || !isSupabaseConfigured()) {
+    return getCachedPacks();
+  }
+
+  try {
+    const { data: dbPacks, error } = await client
+      .from('product_packs')
+      .select('*')
+      .order('name', { ascending: true });
+
+    if (error) {
+      // Jika tabel belum dibuat (error 42P01 di postgres), fallback tanpa error fatal
+      console.warn('[ALCO Hub] Info: Menggunakan Product Packs bawaan (tabel product_packs belum aktif di cloud).', error.message);
+      return getCachedPacks();
+    }
+
+    if (dbPacks && dbPacks.length > 0) {
+      const mappedPacks = dbPacks.map(mapDbRowToPack);
+      // Gabungkan dengan default packs yang belum ada di DB agar tidak hilang
+      const existingIds = new Set(mappedPacks.map((p: EcosystemPack) => p.id));
+      const combined = [
+        ...mappedPacks,
+        ...DEFAULT_PACKS.filter((p) => !existingIds.has(p.id)),
+      ];
+      savePacksToCache(combined);
+      return combined;
+    }
+  } catch (err) {
+    console.warn('[ALCO Hub] Failed to sync product packs:', err);
+  }
+
+  return getCachedPacks();
+}
+
+/**
+ * Simpan / Buat Product Pack baru di Supabase & Local Cache
+ */
+export async function saveProductPackToCloud(
+  pack: EcosystemPack
+): Promise<{ success: boolean; message: string; pack: EcosystemPack }> {
+  const cached = getCachedPacks();
+  const existingIdx = cached.findIndex((p) => p.id === pack.id);
+  let updatedPacks: EcosystemPack[];
+  if (existingIdx >= 0) {
+    updatedPacks = cached.map((p) => (p.id === pack.id ? pack : p));
+  } else {
+    updatedPacks = [...cached, pack];
+  }
+  savePacksToCache(updatedPacks);
+
+  const client = getSupabase();
+  if (!client || !isSupabaseConfigured()) {
+    return {
+      success: true,
+      message: `Product Pack "${pack.name}" disimpan di cache lokal (Supabase belum terhubung).`,
+      pack,
+    };
+  }
+
+  try {
+    const dbRow = mapPackToDbRow(pack);
+    const { error } = await client.from('product_packs').upsert(dbRow, { onConflict: 'id' });
+
+    if (error) {
+      return {
+        success: true,
+        message: `Product Pack "${pack.name}" tersimpan di lokal (Jalankan migrasi SQL product_packs di Supabase untuk cloud sync).`,
+        pack,
+      };
+    }
+
+    return {
+      success: true,
+      message: `Product Pack "${pack.name}" berhasil disimpan ke Supabase Cloud!`,
+      pack,
+    };
+  } catch (err: any) {
+    return {
+      success: true,
+      message: `Product Pack disimpan di cache lokal (${err.message || 'Offline'}).`,
+      pack,
+    };
+  }
+}
+
+/**
+ * Hapus Product Pack dari Supabase & Local Cache
+ */
+export async function deleteProductPackFromCloud(
+  packId: string
+): Promise<{ success: boolean; message: string }> {
+  const cached = getCachedPacks();
+  const updatedPacks = cached.filter((p) => p.id !== packId);
+  savePacksToCache(updatedPacks);
+
+  const client = getSupabase();
+  if (!client || !isSupabaseConfigured()) {
+    return {
+      success: true,
+      message: 'Product Pack dihapus dari cache lokal.',
+    };
+  }
+
+  try {
+    const { error } = await client.from('product_packs').delete().eq('id', packId);
+    if (error) {
+      console.warn('Gagal menghapus pack dari cloud:', error);
+    }
+    return {
+      success: true,
+      message: 'Product Pack berhasil dihapus.',
+    };
+  } catch (err: any) {
+    return {
+      success: true,
+      message: `Product Pack dihapus dari cache lokal (${err.message}).`,
+    };
   }
 }
 

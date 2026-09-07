@@ -5,7 +5,8 @@
 
 export type NavigationTab = 'home' | 'store' | 'library' | 'packs' | 'updates' | 'admin' | 'settings';
 
-export type PricingType = 'free' | 'licensed' | 'coming-soon';
+export type PricingType = 'free' | 'licensed' | 'trial' | 'coming-soon';
+export type AccessModel = 'free' | 'licensed' | 'trial' | 'coming-soon';
 
 export type UserLicenseStatus = 'active' | 'inactive' | 'expired' | 'none';
 
@@ -53,6 +54,8 @@ export interface EcosystemApp {
   
   // Distribution & Commercial Model
   pricingType: PricingType;
+  accessModel?: AccessModel;
+  trialDurationDays?: number; // Durasi trial dalam hari jika model trial dipilih (misal: 7, 14, 30)
   priceLabel?: string;
   currency?: string;
   published: boolean; // Source of truth: true = visible to public users, false = draft (admin only)
@@ -97,6 +100,9 @@ export interface EcosystemPack {
   badge?: string;
   status: 'active' | 'coming-soon';
   toolCount: number;
+  isCustom?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export type ContentEngineUpdateStatus = 'checking' | 'up-to-date' | 'update-available' | 'unable-to-check';

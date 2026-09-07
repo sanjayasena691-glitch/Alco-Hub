@@ -5,7 +5,7 @@
  * dan memperbarui metadata katalog Supabase secara aman melalui Edge Function.
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   UploadCloud,
   FileCode,
@@ -23,6 +23,7 @@ import {
   Sparkles,
   ArrowRight,
   Info,
+  Wand2,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -31,6 +32,16 @@ import {
   AdminAuthSession,
 } from '../types';
 import { uploadAndPublishRelease, calculateFileSha256 } from '../services/releaseService';
+import {
+  suggestNextVersion,
+  bumpPatch,
+  bumpMinor,
+  bumpMajor,
+  generateGitHubTag,
+  normalizeVersion,
+  compareSemver,
+  sanitizeAppId,
+} from '../utils/versioning';
 
 interface ReleaseManagerProps {
   apps: EcosystemApp[];
@@ -69,20 +80,30 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     (a) => (a.appId && a.appId === selectedAppId) || a.id === selectedAppId
   ) || apps[0];
 
+  // Auto-suggest next version saat app dipilih pertama kali
+  useEffect(() => {
+    if (selectedApp && !versionInput) {
+      const currentLatest = selectedApp.latestVersion || selectedApp.version;
+      setVersionInput(suggestNextVersion(currentLatest));
+    }
+  }, [selectedApp]);
+
   // Handler: Ganti Aplikasi
   const handleSelectApp = (appId: string) => {
     setSelectedAppId(appId);
     const target = apps.find((a) => (a.appId && a.appId === appId) || a.id === appId);
     if (target) {
-      // Saran versi baru (misal patch bump)
-      const currentLatest = target.latestVersion || target.version || '0.1.0';
-      const parts = currentLatest.split('.');
-      if (parts.length === 3 && !isNaN(Number(parts[2]))) {
-        setVersionInput(`${parts[0]}.${parts[1]}.${Number(parts[2]) + 1}`);
-      } else {
-        setVersionInput(currentLatest);
-      }
+      const currentLatest = target.latestVersion || target.version;
+      setVersionInput(suggestNextVersion(currentLatest));
     }
+  };
+
+  // Quick Version Bump Handlers
+  const handleApplyBump = (type: 'patch' | 'minor' | 'major') => {
+    const baseVer = selectedApp?.latestVersion || selectedApp?.version || versionInput || '0.1.0';
+    if (type === 'patch') setVersionInput(bumpPatch(baseVer));
+    if (type === 'minor') setVersionInput(bumpMinor(baseVer));
+    if (type === 'major') setVersionInput(bumpMajor(baseVer));
   };
 
   // Handler: Pilih File
@@ -157,12 +178,20 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
       return;
     }
 
-    if (!versionInput.trim()) {
-      alert('Masukkan nomor versi rilis (contoh: 0.1.1).');
+    const cleanVer = normalizeVersion(versionInput);
+    if (!cleanVer) {
+      alert('Masukkan nomor versi rilis yang valid (contoh: 0.1.1).');
       return;
     }
 
-    const cleanVer = versionInput.trim();
+    const currentLatest = selectedApp.latestVersion || selectedApp.version;
+    if (currentLatest && compareSemver(cleanVer, currentLatest) <= 0) {
+      const confirmLower = window.confirm(
+        `PERINGATAN VERSI: Versi baru (${cleanVer}) sama atau lebih rendah dari versi yang sudah dirilis (v${currentLatest}).\n\nGitHub Releases tidak mengizinkan penimpaan rilis yang sudah ada. Apakah Anda yakin ingin melanjutkan?`
+      );
+      if (!confirmLower) return;
+    }
+
     const cleanNotes = releaseNotesInput.trim() || `Rilis resmi ${selectedApp.name} versi v${cleanVer}.`;
 
     const result = await uploadAndPublishRelease({
@@ -224,8 +253,14 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     uploadProgress.status === 'updating_catalog';
 
   const canonicalAppId = selectedApp?.appId || selectedApp?.id || '';
-  const expectedTag = `${canonicalAppId}-v${versionInput.trim() || '0.1.0'}`;
-  const expectedReleaseName = `${selectedApp?.name || 'Aplikasi'} v${versionInput.trim() || '0.1.0'}`;
+  const currentAppLatest = selectedApp?.latestVersion || selectedApp?.version || '0.1.0';
+  const expectedTag = generateGitHubTag(canonicalAppId, versionInput || '0.1.0');
+  const expectedReleaseName = `${selectedApp?.name || 'Aplikasi'} v${normalizeVersion(versionInput || '0.1.0')}`;
+  const isVersionConflictWarning = Boolean(
+    versionInput &&
+    currentAppLatest &&
+    compareSemver(normalizeVersion(versionInput), currentAppLatest) <= 0
+  );
 
   return (
     <div id="alco-release-manager" className="space-y-6">
@@ -246,8 +281,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
             Release Manager & Binary Distribution
           </h2>
           <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
-            Unggah file installer Windows (.exe) dari komputer Anda. Sistem akan memverifikasi hash SHA-256,
-            membuat tag & rilis resmi di GitHub Releases melalui Supabase Edge Function, dan memperbarui metadata katalog secara real-time.
+            Unggah file installer Windows (.exe) dari komputer Anda. Sistem memvalidasi nomor versi secara otomatis, mencegah penimpaan rilis lama (immutable), membuat tag & release resmi di GitHub Releases, dan memperbarui metadata katalog secara real-time.
           </p>
         </div>
 
@@ -337,7 +371,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
               <p className="text-rose-200/90 font-mono text-[11px] leading-relaxed break-all">
                 {uploadProgress.error}
               </p>
-              <div className="pt-2 flex items-center gap-3">
+              <div className="pt-2 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   onClick={handleResetForm}
@@ -345,9 +379,16 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                 >
                   Coba Ulang
                 </button>
-                <span className="text-[11px] text-slate-400">
-                  Pastikan secret GITHUB_TOKEN telah diatur di Supabase Edge Functions.
-                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleApplyBump('patch');
+                    handleResetForm();
+                  }}
+                  className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-colors"
+                >
+                  Gunakan Patch Berikutnya (+0.0.1)
+                </button>
               </div>
             </div>
           )}
@@ -357,7 +398,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
             <div className="p-4 rounded-xl bg-slate-950/80 border border-emerald-500/20 space-y-3.5 text-xs">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <span className="text-[11px] text-slate-500 block">GitHub Release Tag:</span>
+                  <span className="text-[11px] text-slate-500 block">GitHub Release Tag Resmi:</span>
                   <div className="flex items-center gap-2">
                     <span className="font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
                       {uploadProgress.releaseData.tag}
@@ -456,7 +497,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                 <p className="text-[11px] text-slate-400">
                   Status Diterbitkan saat ini:{' '}
                   <span className={uploadProgress.releaseData.published ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
-                    {uploadProgress.releaseData.published ? 'Published (Dapat diunduh public)' : 'Draft (Belum diterbitkan)'}
+                    {uploadProgress.releaseData.published ? 'Published (Dapat diunduh user di Store)' : 'Draft (Belum dipublish)'}
                   </span>
                 </p>
 
@@ -493,7 +534,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
         <div className="border-b border-slate-800 pb-4">
           <h3 className="text-base font-bold text-white">Formulir Publikasi Rilis Resmi</h3>
           <p className="text-xs text-slate-400">
-            Lengkapi data rilis di bawah ini. File binary akan diunggah langsung ke GitHub Releases dan terhubung ke ALCO Hub.
+            Lengkapi data rilis di bawah ini. File binary (.exe) akan diunggah langsung ke GitHub Releases dan terhubung ke ALCO Hub.
           </p>
         </div>
 
@@ -656,38 +697,81 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
         </div>
 
         {/* 3. Konfigurasi Versi & Release Notes */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-300">
-              3. Nomor Versi Baru:
+        <div className="space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+              <span>3. Nomor Versi Rilis (Semantic Versioning):</span>
             </label>
-            <div className="relative">
-              <input
-                id="release-version-input"
-                type="text"
-                placeholder="contoh: 0.1.1"
-                value={versionInput}
-                onChange={(e) => setVersionInput(e.target.value)}
-                disabled={isUploading}
-                required
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono focus:outline-hidden focus:border-indigo-500 disabled:opacity-50"
-              />
+            {/* Quick Semver Bump Actions */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                <Wand2 className="w-3 h-3 text-indigo-400" />
+                Saran Otomatis:
+              </span>
+              <button
+                type="button"
+                onClick={() => handleApplyBump('patch')}
+                className="px-2 py-1 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 text-[10px] font-bold font-mono transition-colors"
+                title="Naikkan Patch (+0.0.1) untuk perbaikan bug / update kecil"
+              >
+                + Patch ({bumpPatch(currentAppLatest)})
+              </button>
+              <button
+                type="button"
+                onClick={() => handleApplyBump('minor')}
+                className="px-2 py-1 rounded-md bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 text-[10px] font-bold font-mono transition-colors"
+                title="Naikkan Minor (+0.1.0) untuk penambahan fitur baru"
+              >
+                + Minor ({bumpMinor(currentAppLatest)})
+              </button>
+              <button
+                type="button"
+                onClick={() => handleApplyBump('major')}
+                className="px-2 py-1 rounded-md bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/20 text-[10px] font-bold font-mono transition-colors"
+                title="Naikkan Major (+1.0.0) untuk perubahan besar"
+              >
+                + Major ({bumpMajor(currentAppLatest)})
+              </button>
             </div>
-            <p className="text-[11px] text-slate-500">
-              Format semver standar (major.minor.patch).
-            </p>
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-300">
-              Tag Rilis GitHub (Otomatis):
-            </label>
-            <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-indigo-300 truncate">
-              {expectedTag}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <div className="relative">
+                <input
+                  id="release-version-input"
+                  type="text"
+                  placeholder="contoh: 0.1.1"
+                  value={versionInput}
+                  onChange={(e) => setVersionInput(e.target.value)}
+                  disabled={isUploading}
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono focus:outline-hidden focus:border-indigo-500 disabled:opacity-50"
+                />
+              </div>
+              <p className="text-[11px] text-slate-500 flex items-center justify-between">
+                <span>Format semver standar (major.minor.patch).</span>
+                <span className="text-slate-400">Versi Cloud: <strong className="text-indigo-400 font-mono">v{currentAppLatest}</strong></span>
+              </p>
+              {isVersionConflictWarning && (
+                <p className="text-[11px] text-amber-400 font-medium flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Versi harus lebih tinggi dari v{currentAppLatest} untuk mencegah konflik tag GitHub.</span>
+                </p>
+              )}
             </div>
-            <p className="text-[11px] text-slate-500">
-              Judul Rilis: <span className="text-slate-400 font-semibold">{expectedReleaseName}</span>
-            </p>
+
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-slate-400">
+                GitHub Release Tag (Otomatis & Read-Only):
+              </label>
+              <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-indigo-300 truncate select-all">
+                {expectedTag}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Judul Rilis: <span className="text-slate-400 font-semibold">{expectedReleaseName}</span>
+              </p>
+            </div>
           </div>
         </div>
 
@@ -707,16 +791,15 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
           />
         </div>
 
-        {/* Security & Secret Notice */}
+        {/* Security & Immutability Notice */}
         <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800/80 text-xs text-slate-400 flex items-start gap-2.5">
           <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-semibold text-slate-300">
-              Keamanan Server-Side Terjamin
+              Prinsip Rilis Permanen (Immutable Releases)
             </p>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-              Token GitHub Personal Access Token (PAT) disimpan secara rahasia di Supabase Edge Function Secrets.
-              ALCO Hub client tidak pernah memegang atau menerima token GitHub.
+              Setiap rilis yang berhasil dipublikasikan di GitHub Releases memiliki tag unik yang permanen. Sistem secara otomatis mencegah penimpaan file rilis lama demi menjaga kestabilan dan integritas update seluruh pengguna ALCO Hub.
             </p>
           </div>
         </div>
@@ -736,7 +819,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
           ) : (
             <>
               <UploadCloud className="w-4 h-4" />
-              <span>Unggah & Buat GitHub Release</span>
+              <span>Unggah & Buat GitHub Release ({expectedTag})</span>
             </>
           )}
         </button>

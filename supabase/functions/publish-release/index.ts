@@ -121,26 +121,36 @@ serve(async (req: Request) => {
 
     // 5. Ekstraksi Payload & File Form Data
     const formData = await req.formData();
-    const appId = ((formData.get('app_id') as string) || '').trim();
-    const appName = ((formData.get('app_name') as string) || '').trim() || appId;
-    const version = ((formData.get('version') as string) || '').trim();
+    const rawAppId = ((formData.get('app_id') as string) || '').trim();
+    const rawAppName = ((formData.get('app_name') as string) || '').trim();
+    const rawVersion = ((formData.get('version') as string) || '').trim();
     const releaseNotes = ((formData.get('release_notes') as string) || '').trim();
     const sha256 = ((formData.get('sha256') as string) || '').trim();
     const file = formData.get('file') as File | null;
 
-    if (!appId) {
+    if (!rawAppId) {
       return new Response(
         JSON.stringify({ success: false, error: 'App ID wajib dipilih.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    if (!version) {
+    if (!rawVersion) {
       return new Response(
         JSON.stringify({ success: false, error: 'Nomor versi rilis wajib diisi (contoh: 0.1.1).' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // Sanitasi App ID dan Normalisasi Version
+    const cleanAppId = rawAppId
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/-+/g, '-');
+
+    const cleanVersion = rawVersion.trim().replace(/^v/i, '').replace(/[^0-9.]/g, '') || '0.1.0';
+    const appName = rawAppName || cleanAppId;
 
     if (!file || typeof file.size !== 'number' || file.size === 0) {
       return new Response(
@@ -166,21 +176,21 @@ serve(async (req: Request) => {
     // Pastikan app terdaftar di database
     const { data: existingApp, error: appFetchError } = await supabaseAdmin
       .from('apps')
-      .select('id, app_id, name, published')
-      .eq('app_id', appId)
+      .select('id, app_id, name, published, latest_version')
+      .eq('app_id', cleanAppId)
       .maybeSingle();
 
     if (appFetchError || !existingApp) {
       return new Response(
-        JSON.stringify({ success: false, error: `Aplikasi dengan App ID "${appId}" tidak ditemukan di katalog Supabase.` }),
+        JSON.stringify({ success: false, error: `Aplikasi dengan App ID "${cleanAppId}" tidak ditemukan di katalog Supabase.` }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 6. Buat GitHub Release
-    const tagName = `${appId}-v${version}`;
-    const releaseTitle = `${appName} v${version}`;
-    const releaseBody = releaseNotes || `Rilis resmi ${appName} versi v${version} didistribusikan melalui ALCO Hub Private Store.`;
+    // 6. Validasi Version & Tag Collision (IMMUTABILITY CHECK)
+    const tagName = `${cleanAppId}-v${cleanVersion}`;
+    const releaseTitle = `${appName} v${cleanVersion}`;
+    const releaseBody = releaseNotes || `Rilis resmi ${appName} versi v${cleanVersion} didistribusikan melalui ALCO Hub Private Store.`;
 
     const githubApiHeaders = {
       Authorization: `Bearer ${githubToken.trim()}`,
@@ -189,9 +199,30 @@ serve(async (req: Request) => {
       'User-Agent': 'ALCO-Hub-Release-Manager/1.0',
     };
 
-    const createReleaseUrl = `https://api.github.com/repos/${githubOwner}/${githubRepo}/releases`;
-    let releaseData: any = null;
+    // Helper hitung saran patch berikutnya
+    const versionParts = cleanVersion.split('.');
+    const nextPatch = versionParts.length >= 3 && !isNaN(Number(versionParts[2]))
+      ? `${versionParts[0]}.${versionParts[1]}.${Number(versionParts[2]) + 1}`
+      : `${cleanVersion}.1`;
 
+    // Cek apakah tag / release sudah ada di GitHub
+    const checkTagUrl = `https://api.github.com/repos/${githubOwner}/${githubRepo}/releases/tags/${encodeURIComponent(tagName)}`;
+    const checkTagResponse = await fetch(checkTagUrl, { headers: githubApiHeaders });
+
+    if (checkTagResponse.ok) {
+      // RELEASE SUDAH ADA -> CEGAH COLLISION, JANGAN OVERWRITE
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Versi ${cleanVersion} sudah pernah dirilis (GitHub Tag: "${tagName}"). Rilis lama bersifat permanen dan tidak dapat ditimpa. Gunakan versi berikutnya: v${nextPatch}.`,
+          suggestedVersion: nextPatch,
+        }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // 7. Buat GitHub Release Baru
+    const createReleaseUrl = `https://api.github.com/repos/${githubOwner}/${githubRepo}/releases`;
     const createReleaseResponse = await fetch(createReleaseUrl, {
       method: 'POST',
       headers: {
@@ -207,36 +238,28 @@ serve(async (req: Request) => {
       }),
     });
 
-    if (createReleaseResponse.status === 422) {
-      // Release dengan tag tersebut mungkin sudah ada, ambil datanya
-      const getTagResponse = await fetch(
-        `https://api.github.com/repos/${githubOwner}/${githubRepo}/releases/tags/${encodeURIComponent(tagName)}`,
-        { headers: githubApiHeaders }
-      );
-      if (getTagResponse.ok) {
-        releaseData = await getTagResponse.json();
-      } else {
-        const errText = await createReleaseResponse.text();
+    if (!createReleaseResponse.ok) {
+      const errText = await createReleaseResponse.text();
+      if (createReleaseResponse.status === 422) {
         return new Response(
           JSON.stringify({
             success: false,
-            error: `Gagal membuat tag rilis di GitHub (422 Unprocessable): ${errText}`,
+            error: `Versi ${cleanVersion} sudah pernah dirilis atau format tag "${tagName}" tidak diizinkan oleh GitHub: ${errText}. Gunakan versi berikutnya: v${nextPatch}.`,
+            suggestedVersion: nextPatch,
           }),
           { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-    } else if (!createReleaseResponse.ok) {
-      const errText = await createReleaseResponse.text();
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Gagal membuat release di repositori GitHub ${githubOwner}/${githubRepo} (${createReleaseResponse.status}): ${errText}`,
+          error: `Gagal membuat release di GitHub ${githubOwner}/${githubRepo} (${createReleaseResponse.status}): ${errText}`,
         }),
         { status: createReleaseResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
-    } else {
-      releaseData = await createReleaseResponse.json();
     }
+
+    const releaseData = await createReleaseResponse.json();
 
     if (!releaseData || !releaseData.id || !releaseData.upload_url) {
       return new Response(
@@ -248,22 +271,8 @@ serve(async (req: Request) => {
       );
     }
 
-    // 7. Bersihkan asset lama dengan nama yang sama jika ada (untuk overwrite bersih)
+    // 8. Upload File Binary ke GitHub Release Asset (Fresh Release)
     const cleanFileName = file.name;
-    if (Array.isArray(releaseData.assets)) {
-      const existingAsset = releaseData.assets.find((a: any) => a.name === cleanFileName);
-      if (existingAsset && existingAsset.id) {
-        await fetch(
-          `https://api.github.com/repos/${githubOwner}/${githubRepo}/releases/assets/${existingAsset.id}`,
-          {
-            method: 'DELETE',
-            headers: githubApiHeaders,
-          }
-        );
-      }
-    }
-
-    // 8. Upload File Binary ke GitHub Release Asset
     const uploadUrlRaw = releaseData.upload_url as string;
     const cleanUploadUrl = uploadUrlRaw.replace(/\{.*?\}/, `?name=${encodeURIComponent(cleanFileName)}`);
     const fileBytes = await file.arrayBuffer();
@@ -302,17 +311,16 @@ serve(async (req: Request) => {
     }
 
     // 9. Perbarui Metadata Aplikasi di Supabase (public.apps)
-    // PENTING: Jangan ubah kolom 'published' secara otomatis agar Owner dapat memverifikasi sebelum rilis publik
     const { error: updateCatalogError } = await supabaseAdmin
       .from('apps')
       .update({
-        latest_version: version,
+        latest_version: cleanVersion,
         download_url: browserDownloadUrl,
         sha256: sha256.toLowerCase().trim(),
         release_notes: releaseNotes,
         updated_at: new Date().toISOString(),
       })
-      .eq('app_id', appId);
+      .eq('app_id', cleanAppId);
 
     if (updateCatalogError) {
       return new Response(
@@ -328,10 +336,10 @@ serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Rilis ${appName} v${version} berhasil diunggah ke GitHub Releases dan katalog Supabase telah diperbarui.`,
+        message: `Rilis ${appName} v${cleanVersion} berhasil diunggah ke GitHub Releases dan katalog Supabase telah diperbarui.`,
         data: {
-          appId,
-          version,
+          appId: cleanAppId,
+          version: cleanVersion,
           tag: tagName,
           releaseName: releaseTitle,
           downloadUrl: browserDownloadUrl,
