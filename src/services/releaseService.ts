@@ -1,15 +1,78 @@
 /**
- * ALCO Hub - Release Publisher & Management Service
+ * ALCO Hub - Release Publisher & Management Service (Direct GitHub Releases Architecture)
  * 
- * Bertanggung jawab untuk:
- * 1. Menghitung SHA-256 Checksum file installer di browser secara aman sebelum diunggah
- * 2. Mengunggah file installer .exe dan metadata ke Supabase Edge Function 'publish-release'
- * 3. Memantau progres unggahan secara real-time
- * 4. Menerima URL rilis resmi dari GitHub Releases dan memperbarui state katalog
+ * Arsitektur Rilis Resmi:
+ * 1. Menghitung SHA-256 Checksum file installer di browser secara aman sebelum diunggah (Web Crypto API)
+ * 2. Mengunggah binary installer .exe LANGSUNG ke GitHub Releases API via direct stream (Bebas dari limit memori Edge Function)
+ * 3. Memantau progres unggahan secara real-time via XHR Progress Events
+ * 4. Menerima browser_download_url resmi dari GitHub Releases
+ * 5. Memperbarui metadata katalog di Supabase (public.apps) menggunakan sesi terautentikasi Owner
+ * 6. Kredensial GitHub (PAT) disimpan hanya di sesi Owner lokal (sessionStorage/memory), tidak pernah dibundel ke installer publik.
  */
 
-import { EcosystemApp, ReleaseUploadProgress, ReleaseUploadStatus } from '../types';
-import { getSupabase, getSupabaseConfig } from './supabaseClient';
+import { EcosystemApp, ReleaseUploadProgress } from '../types';
+import { saveAppToCloud } from './storeService';
+import { getSupabase } from './supabaseClient';
+
+const STORAGE_KEY_GITHUB_TOKEN = 'alco_owner_gh_token_session';
+const STORAGE_KEY_GITHUB_OWNER = 'alco_owner_gh_repo_owner';
+const STORAGE_KEY_GITHUB_REPO = 'alco_owner_gh_repo_name';
+
+export const DEFAULT_GITHUB_REPO_OWNER = 'yaladzan92-creator';
+export const DEFAULT_GITHUB_REPO_NAME = 'Alco-Releases';
+
+export interface GitHubPublishConfig {
+  token: string;
+  owner: string;
+  repo: string;
+  rememberInSession: boolean;
+}
+
+/**
+ * Membaca konfigurasi GitHub Publisher khusus Owner dari sessionStorage
+ */
+export function getGitHubPublishConfig(): GitHubPublishConfig {
+  const sessionToken = sessionStorage.getItem(STORAGE_KEY_GITHUB_TOKEN) || '';
+  const sessionOwner = sessionStorage.getItem(STORAGE_KEY_GITHUB_OWNER) || DEFAULT_GITHUB_REPO_OWNER;
+  const sessionRepo = sessionStorage.getItem(STORAGE_KEY_GITHUB_REPO) || DEFAULT_GITHUB_REPO_NAME;
+
+  return {
+    token: sessionToken,
+    owner: sessionOwner,
+    repo: sessionRepo,
+    rememberInSession: Boolean(sessionToken),
+  };
+}
+
+/**
+ * Menyimpan konfigurasi GitHub Publisher di sessionStorage Owner
+ */
+export function saveGitHubPublishConfig(config: {
+  token: string;
+  owner: string;
+  repo: string;
+}): void {
+  if (config.token) {
+    sessionStorage.setItem(STORAGE_KEY_GITHUB_TOKEN, config.token.trim());
+  } else {
+    sessionStorage.removeItem(STORAGE_KEY_GITHUB_TOKEN);
+  }
+
+  if (config.owner) {
+    sessionStorage.setItem(STORAGE_KEY_GITHUB_OWNER, config.owner.trim());
+  }
+
+  if (config.repo) {
+    sessionStorage.setItem(STORAGE_KEY_GITHUB_REPO, config.repo.trim());
+  }
+}
+
+/**
+ * Menghapus token GitHub dari sesi
+ */
+export function clearGitHubPublishConfig(): void {
+  sessionStorage.removeItem(STORAGE_KEY_GITHUB_TOKEN);
+}
 
 /**
  * Menghitung SHA-256 hash dari File lokal menggunakan Web Crypto API
@@ -19,7 +82,7 @@ export async function calculateFileSha256(
   onProgress?: (percent: number) => void
 ): Promise<string> {
   if (onProgress) onProgress(10);
-  
+
   const arrayBuffer = await file.arrayBuffer();
   if (onProgress) onProgress(60);
 
@@ -33,38 +96,71 @@ export async function calculateFileSha256(
   return hashHex.toLowerCase();
 }
 
-export interface PublishReleaseOptions {
+export interface DirectPublishOptions {
   app: EcosystemApp;
   file: File;
   version: string;
   releaseNotes: string;
+  githubConfig: GitHubPublishConfig;
   onProgress: (progress: ReleaseUploadProgress) => void;
 }
 
+export interface PublishResult {
+  success: boolean;
+  data?: {
+    appId: string;
+    version: string;
+    tag: string;
+    releaseName: string;
+    downloadUrl: string;
+    sha256: string;
+    htmlUrl?: string;
+    fileName?: string;
+    published?: boolean;
+  };
+  error?: string;
+}
+
 /**
- * Memulai alur publikasi rilis ke Supabase Edge Function:
- * - Menghitung SHA-256
- * - Upload file multipart ke /functions/v1/publish-release
- * - Menerima hasil GitHub Release & database update
+ * Eksekusi Alur Rilis Direct ke GitHub Releases & Update Supabase
  */
 export async function uploadAndPublishRelease({
   app,
   file,
   version,
   releaseNotes,
+  githubConfig,
   onProgress,
-}: PublishReleaseOptions): Promise<{
-  success: boolean;
-  data?: any;
-  error?: string;
-}> {
+}: DirectPublishOptions): Promise<PublishResult> {
   const appId = app.appId || app.id;
-  const cleanVersion = version.trim();
-  const cleanNotes = releaseNotes.trim();
+  const cleanAppId = appId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-');
 
-  // 1. Validasi Awal di Client
+  const cleanVersion = version.trim().replace(/^v/i, '').replace(/[^0-9.]/g, '') || '0.1.0';
+  const cleanNotes = releaseNotes.trim() || `Rilis resmi ${app.name} versi v${cleanVersion} didistribusikan melalui ALCO Hub.`;
+  const ghToken = githubConfig.token.trim();
+  const ghOwner = githubConfig.owner.trim() || DEFAULT_GITHUB_REPO_OWNER;
+  const ghRepo = githubConfig.repo.trim() || DEFAULT_GITHUB_REPO_NAME;
+
+  // 1. Validasi Input
+  if (!ghToken) {
+    const errorMsg = 'GitHub Personal Access Token (PAT) belum diisi. Masukkan token dengan scope "repo" di panel konfigurasi GitHub.';
+    onProgress({
+      status: 'failed',
+      progressPercent: 0,
+      bytesUploaded: 0,
+      totalBytes: file?.size || 0,
+      currentStepMessage: 'GitHub Token diperlukan.',
+      error: errorMsg,
+    });
+    return { success: false, error: errorMsg };
+  }
+
   if (!file || !file.name.toLowerCase().endsWith('.exe')) {
-    const errorMsg = 'File harus berupa installer Windows (.exe).';
+    const errorMsg = 'File harus berupa installer Windows executable (.exe).';
     onProgress({
       status: 'failed',
       progressPercent: 0,
@@ -76,58 +172,13 @@ export async function uploadAndPublishRelease({
     return { success: false, error: errorMsg };
   }
 
-  if (!cleanVersion) {
-    const errorMsg = 'Nomor versi rilis wajib diisi (contoh: 0.1.1).';
-    onProgress({
-      status: 'failed',
-      progressPercent: 0,
-      bytesUploaded: 0,
-      totalBytes: file.size,
-      currentStepMessage: 'Gagal validasi versi.',
-      error: errorMsg,
-    });
-    return { success: false, error: errorMsg };
-  }
-
-  // 2. Dapatkan Session Supabase Auth
-  const supabase = getSupabase();
-  if (!supabase) {
-    const errorMsg = 'Koneksi Supabase belum dikonfigurasi. Periksa Pengaturan Supabase.';
-    onProgress({
-      status: 'failed',
-      progressPercent: 0,
-      bytesUploaded: 0,
-      totalBytes: file.size,
-      currentStepMessage: 'Supabase tidak terhubung.',
-      error: errorMsg,
-    });
-    return { success: false, error: errorMsg };
-  }
-
-  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-  if (sessionErr || !sessionData?.session?.access_token) {
-    const errorMsg = 'Sesi login Owner tidak ditemukan. Silakan login ulang di Owner Portal.';
-    onProgress({
-      status: 'failed',
-      progressPercent: 0,
-      bytesUploaded: 0,
-      totalBytes: file.size,
-      currentStepMessage: 'Autentikasi Owner diperlukan.',
-      error: errorMsg,
-    });
-    return { success: false, error: errorMsg };
-  }
-
-  const accessToken = sessionData.session.access_token;
-  const { url: supabaseUrl } = getSupabaseConfig();
-
-  // 3. STEP: Preparing & Calculating SHA-256
+  // 2. Step: Menghitung SHA-256
   onProgress({
     status: 'preparing',
     progressPercent: 5,
     bytesUploaded: 0,
     totalBytes: file.size,
-    currentStepMessage: 'Menghitung SHA-256 Checksum file installer...',
+    currentStepMessage: 'Menghitung SHA-256 Checksum file installer di browser...',
   });
 
   let sha256 = '';
@@ -135,10 +186,10 @@ export async function uploadAndPublishRelease({
     sha256 = await calculateFileSha256(file, (pct) => {
       onProgress({
         status: 'preparing',
-        progressPercent: Math.round(5 + (pct * 0.15)), // 5% -> 20%
+        progressPercent: Math.round(5 + pct * 0.15), // 5% -> 20%
         bytesUploaded: 0,
         totalBytes: file.size,
-        currentStepMessage: `Memverifikasi hash SHA-256 (${pct}%)...`,
+        currentStepMessage: `Memverifikasi hash SHA-256 lokal (${pct}%)...`,
       });
     });
   } catch (err: any) {
@@ -148,119 +199,172 @@ export async function uploadAndPublishRelease({
       progressPercent: 0,
       bytesUploaded: 0,
       totalBytes: file.size,
-      currentStepMessage: 'Gagal memproses file lokal.',
+      currentStepMessage: 'Gagal memproses file.',
       error: errorMsg,
     });
     return { success: false, error: errorMsg };
   }
 
-  // 4. STEP: Uploading via XMLHttpRequest for real-time progress
+  const tagName = `${cleanAppId}-v${cleanVersion}`;
+  const releaseTitle = `${app.name} v${cleanVersion}`;
+
+  const githubApiHeaders = {
+    Authorization: `Bearer ${ghToken}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  // 3. Step: Memeriksa apakah Tag / Release sudah ada di GitHub (Immutability Check)
   onProgress({
-    status: 'uploading',
-    progressPercent: 20,
+    status: 'creating_release',
+    progressPercent: 25,
     bytesUploaded: 0,
     totalBytes: file.size,
-    currentStepMessage: 'Memulai pengunggahan installer ke secure Edge Function...',
+    currentStepMessage: `Memeriksa tag "${tagName}" di GitHub ${ghOwner}/${ghRepo}...`,
     sha256,
   });
 
-  const formData = new FormData();
-  formData.append('app_id', appId);
-  formData.append('app_name', app.name);
-  formData.append('version', cleanVersion);
-  formData.append('release_notes', cleanNotes);
-  formData.append('sha256', sha256);
-  formData.append('file', file, file.name);
+  try {
+    const checkTagUrl = `https://api.github.com/repos/${ghOwner}/${ghRepo}/releases/tags/${encodeURIComponent(tagName)}`;
+    const checkTagRes = await fetch(checkTagUrl, { headers: githubApiHeaders });
 
-  const endpointUrl = `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/publish-release`;
+    if (checkTagRes.ok) {
+      const errorMsg = `Versi ${cleanVersion} sudah pernah dirilis (GitHub Tag: "${tagName}"). Rilis lama bersifat permanen dan tidak dapat ditimpa. Silakan naikkan nomor versi.`;
+      onProgress({
+        status: 'failed',
+        progressPercent: 0,
+        bytesUploaded: 0,
+        totalBytes: file.size,
+        currentStepMessage: 'Tag release sudah ada.',
+        error: errorMsg,
+        sha256,
+      });
+      return { success: false, error: errorMsg };
+    }
+  } catch (err: any) {
+    console.warn('Gagal cek tag rilis GitHub:', err);
+  }
 
-  return new Promise((resolve) => {
+  // 4. Step: Membuat Release di GitHub
+  onProgress({
+    status: 'creating_release',
+    progressPercent: 30,
+    bytesUploaded: 0,
+    totalBytes: file.size,
+    currentStepMessage: `Membuat Release "${releaseTitle}" di GitHub...`,
+    sha256,
+  });
+
+  let uploadUrl = '';
+  let releaseHtmlUrl = '';
+  try {
+    const createReleaseUrl = `https://api.github.com/repos/${ghOwner}/${ghRepo}/releases`;
+    const createRes = await fetch(createReleaseUrl, {
+      method: 'POST',
+      headers: {
+        ...githubApiHeaders,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tag_name: tagName,
+        name: releaseTitle,
+        body: cleanNotes,
+        draft: false,
+        prerelease: false,
+      }),
+    });
+
+    if (!createRes.ok) {
+      const errBody = await createRes.json().catch(() => ({}));
+      const errorMsg = `Gagal membuat GitHub Release (HTTP ${createRes.status}): ${errBody.message || createRes.statusText}`;
+      onProgress({
+        status: 'failed',
+        progressPercent: 0,
+        bytesUploaded: 0,
+        totalBytes: file.size,
+        currentStepMessage: 'Gagal membuat release di GitHub.',
+        error: errorMsg,
+        sha256,
+      });
+      return { success: false, error: errorMsg };
+    }
+
+    const releaseData = await createRes.json();
+    uploadUrl = releaseData.upload_url;
+    releaseHtmlUrl = releaseData.html_url;
+  } catch (err: any) {
+    const errorMsg = `Koneksi ke GitHub API gagal: ${err?.message || 'Network error'}`;
+    onProgress({
+      status: 'failed',
+      progressPercent: 0,
+      bytesUploaded: 0,
+      totalBytes: file.size,
+      currentStepMessage: 'Koneksi ke GitHub API gagal.',
+      error: errorMsg,
+      sha256,
+    });
+    return { success: false, error: errorMsg };
+  }
+
+  // 5. Step: Upload Binary Asset LANGSUNG ke GitHub Releases (uploads.github.com)
+  // Format URL upload GitHub: https://uploads.github.com/repos/.../releases/.../assets{?name,label}
+  const cleanUploadEndpoint = uploadUrl.replace(/\{\?name,label\}$/, '');
+  const assetUploadUrl = `${cleanUploadEndpoint}?name=${encodeURIComponent(file.name)}`;
+
+  onProgress({
+    status: 'uploading',
+    progressPercent: 35,
+    bytesUploaded: 0,
+    totalBytes: file.size,
+    currentStepMessage: `Mengunggah installer (.exe) langsung ke GitHub Releases CDN...`,
+    sha256,
+  });
+
+  const uploadResult = await new Promise<{
+    success: boolean;
+    downloadUrl?: string;
+    error?: string;
+  }>((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', endpointUrl, true);
-    xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+    xhr.open('POST', assetUploadUrl, true);
+    xhr.setRequestHeader('Authorization', `Bearer ${ghToken}`);
+    xhr.setRequestHeader('Accept', 'application/vnd.github+json');
+    xhr.setRequestHeader('X-GitHub-Api-Version', '2022-11-28');
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
 
-    // Upload Progress Listener
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
-        const percentComplete = Math.min(
-          90,
-          Math.round(20 + ((event.loaded / event.total) * 70))
-        );
+        // Progress dari 35% sampai 90%
+        const percent = Math.min(90, Math.round(35 + (event.loaded / event.total) * 55));
         onProgress({
           status: 'uploading',
-          progressPercent: percentComplete,
+          progressPercent: percent,
           bytesUploaded: event.loaded,
           totalBytes: event.total,
-          currentStepMessage: `Mengunggah installer (${Math.round((event.loaded / 1024 / 1024) * 10) / 10} MB / ${Math.round((event.total / 1024 / 1024) * 10) / 10} MB)...`,
+          currentStepMessage: `Mengunggah ke GitHub (${Math.round((event.loaded / 1024 / 1024) * 10) / 10} MB / ${Math.round((event.total / 1024 / 1024) * 10) / 10} MB)...`,
           sha256,
         });
       }
     };
 
-    // When upload finishes and server starts processing GitHub & Database
-    xhr.upload.onload = () => {
-      onProgress({
-        status: 'creating_release',
-        progressPercent: 92,
-        bytesUploaded: file.size,
-        totalBytes: file.size,
-        currentStepMessage: 'Server sedang membuat GitHub Release & mengunggah binary asset...',
-        sha256,
-      });
-    };
-
-    // Request Completion
     xhr.onload = () => {
       let responseJson: any = null;
       try {
         responseJson = JSON.parse(xhr.responseText);
       } catch {
-        // Not JSON
+        // not JSON
       }
 
-      if (xhr.status >= 200 && xhr.status < 300 && responseJson?.success) {
-        onProgress({
-          status: 'updating_catalog',
-          progressPercent: 98,
-          bytesUploaded: file.size,
-          totalBytes: file.size,
-          currentStepMessage: 'Memperbarui metadata rilis di tabel public.apps...',
-          sha256,
+      if (xhr.status >= 200 && xhr.status < 300 && responseJson?.browser_download_url) {
+        resolve({
+          success: true,
+          downloadUrl: responseJson.browser_download_url,
         });
-
-        setTimeout(() => {
-          onProgress({
-            status: 'completed',
-            progressPercent: 100,
-            bytesUploaded: file.size,
-            totalBytes: file.size,
-            currentStepMessage: 'Rilis berhasil dipublish ke GitHub Releases & Supabase!',
-            sha256,
-            releaseData: responseJson.data,
-          });
-
-          resolve({
-            success: true,
-            data: responseJson.data,
-          });
-        }, 600);
       } else {
         const errorMsg =
-          responseJson?.error ||
           responseJson?.message ||
-          xhr.statusText ||
-          `Unggahan rilis gagal (HTTP Status: ${xhr.status})`;
-
-        onProgress({
-          status: 'failed',
-          progressPercent: 0,
-          bytesUploaded: 0,
-          totalBytes: file.size,
-          currentStepMessage: 'Gagal mempublikasikan rilis.',
-          error: errorMsg,
-          sha256,
-        });
-
+          responseJson?.errors?.[0]?.message ||
+          `Unggahan asset ke GitHub gagal (HTTP ${xhr.status}): ${xhr.statusText}`;
         resolve({
           success: false,
           error: errorMsg,
@@ -268,45 +372,135 @@ export async function uploadAndPublishRelease({
       }
     };
 
-    // Network / Transport Error
     xhr.onerror = () => {
-      const errorMsg =
-        'Gagal menghubungi Supabase Edge Function. Pastikan Edge Function "publish-release" telah dideploy di Supabase.';
-      onProgress({
-        status: 'failed',
-        progressPercent: 0,
-        bytesUploaded: 0,
-        totalBytes: file.size,
-        currentStepMessage: 'Koneksi ke Edge Function gagal.',
-        error: errorMsg,
-        sha256,
-      });
-
       resolve({
         success: false,
-        error: errorMsg,
+        error: 'Koneksi jaringan ke uploads.github.com terputus saat mengunggah file binary.',
       });
     };
 
-    // Abort
     xhr.onabort = () => {
-      const errorMsg = 'Unggahan dibatalkan oleh pengguna.';
-      onProgress({
-        status: 'failed',
-        progressPercent: 0,
-        bytesUploaded: 0,
-        totalBytes: file.size,
-        currentStepMessage: 'Unggahan dibatalkan.',
-        error: errorMsg,
-      });
-
       resolve({
         success: false,
-        error: errorMsg,
+        error: 'Unggahan dibatalkan oleh pengguna.',
       });
     };
 
-    // Send payload
-    xhr.send(formData);
+    // Kirim binary file langsung
+    xhr.send(file);
   });
+
+  if (!uploadResult.success || !uploadResult.downloadUrl) {
+    const errorMsg = uploadResult.error || 'Gagal mengunggah binary asset ke GitHub Releases.';
+    onProgress({
+      status: 'failed',
+      progressPercent: 0,
+      bytesUploaded: 0,
+      totalBytes: file.size,
+      currentStepMessage: 'Gagal mengunggah file installer ke GitHub.',
+      error: errorMsg,
+      sha256,
+    });
+    return { success: false, error: errorMsg };
+  }
+
+  const officialDownloadUrl = uploadResult.downloadUrl;
+
+  // 6. Step: Update Supabase Catalog (public.apps)
+  onProgress({
+    status: 'updating_catalog',
+    progressPercent: 92,
+    bytesUploaded: file.size,
+    totalBytes: file.size,
+    currentStepMessage: 'Menyimpan metadata rilis baru ke tabel Supabase public.apps...',
+    sha256,
+  });
+
+  const updatedApp: EcosystemApp = {
+    ...app,
+    latestVersion: cleanVersion,
+    downloadUrl: officialDownloadUrl,
+    sha256: sha256,
+    releaseNotes: cleanNotes,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const cloudSaveRes = await saveAppToCloud(updatedApp, false);
+
+  if (!cloudSaveRes.success) {
+    console.warn('[ALCO Hub] Gagal memperbarui Supabase secara otomatis:', cloudSaveRes.message);
+  }
+
+  // 7. Step: Selesai!
+  const finalReleaseData = {
+    appId: cleanAppId,
+    version: cleanVersion,
+    tag: tagName,
+    releaseName: releaseTitle,
+    downloadUrl: officialDownloadUrl,
+    sha256: sha256,
+    htmlUrl: releaseHtmlUrl,
+    fileName: file.name,
+    published: app.published,
+  };
+
+  onProgress({
+    status: 'completed',
+    progressPercent: 100,
+    bytesUploaded: file.size,
+    totalBytes: file.size,
+    currentStepMessage: 'Rilis resmi berhasil dipublikasikan ke GitHub & Supabase!',
+    sha256,
+    releaseData: finalReleaseData,
+  });
+
+  return {
+    success: true,
+    data: finalReleaseData,
+  };
+}
+
+/**
+ * Generate GitHub CLI script untuk rilis lokal via terminal Owner
+ */
+export function generateGhCliCommand({
+  appId,
+  appName,
+  version,
+  fileName,
+  notes,
+  repoOwner,
+  repoName,
+}: {
+  appId: string;
+  appName: string;
+  version: string;
+  fileName: string;
+  notes: string;
+  repoOwner?: string;
+  repoName?: string;
+}): {
+  cliCommand: string;
+  tag: string;
+  title: string;
+} {
+  const cleanAppId = appId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-');
+  const cleanVersion = version.replace(/^v/i, '').trim();
+  const tag = `${cleanAppId}-v${cleanVersion}`;
+  const title = `${appName} v${cleanVersion}`;
+  const owner = repoOwner || DEFAULT_GITHUB_REPO_OWNER;
+  const repo = repoName || DEFAULT_GITHUB_REPO_NAME;
+  const cleanNotes = (notes || `Rilis resmi ${appName} v${cleanVersion}`).replace(/"/g, '\\"');
+
+  const cliCommand = `gh release create "${tag}" "${fileName}" --repo "${owner}/${repo}" --title "${title}" --notes "${cleanNotes}"`;
+
+  return {
+    cliCommand,
+    tag,
+    title,
+  };
 }

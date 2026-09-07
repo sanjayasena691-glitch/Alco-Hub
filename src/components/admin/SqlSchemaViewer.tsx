@@ -163,26 +163,36 @@ export const SqlSchemaViewer: React.FC<SqlSchemaViewerProps> = ({
         </div>
       </div>
 
-      {/* Edge Function Deployment Info */}
+      {/* Architecture & Release Pipeline Info */}
       <div className="p-6 rounded-2xl bg-slate-900 border border-indigo-500/20 space-y-4">
         <div className="flex items-center gap-2">
           <UploadCloud className="w-5 h-5 text-indigo-400" />
           <h3 className="text-sm font-bold text-white">
-            Supabase Edge Function: <code className="text-indigo-300 font-mono">publish-release</code>
+            Arsitektur Distribusi & Release Publisher ALCO Hub
           </h3>
         </div>
         <p className="text-xs text-slate-400 leading-relaxed">
-          Edge Function ini menangani pengunggahan installer <code className="text-slate-300">.exe</code> ke GitHub Releases secara aman menggunakan GitHub Personal Access Token yang disimpan di server secret. Tag release diformat secara otomatis menjadi <code className="text-indigo-300 font-mono">&#123;app-id&#125;-v&#123;version&#125;</code> dan dijaga immutable.
+          ALCO Hub menggunakan pemisahan tanggung jawab (*Separation of Concerns*) yang efisien dan aman:
         </p>
-        <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 space-y-2.5">
-          <p className="text-slate-500 font-bold"># 1. Konfigurasi Secret GitHub di Supabase:</p>
-          <p className="text-emerald-400 select-all">
-            supabase secrets set GITHUB_TOKEN=ghp_yourToken GITHUB_REPO_OWNER=yaladzan92-creator GITHUB_REPO_NAME=Alco-Releases
-          </p>
-          <p className="text-slate-500 font-bold pt-1"># 2. Deploy Edge Function ke Cloud:</p>
-          <p className="text-indigo-300 select-all">
-            supabase functions deploy publish-release --no-verify-jwt
-          </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+          <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+            <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4" />
+              1. GitHub Releases (Storage & CDN)
+            </span>
+            <p className="text-[11px] text-slate-400">
+              Penyimpanan file installer <code className="text-slate-200 font-mono">.exe</code> berukuran besar. Diunggah langsung dari komputer Owner tanpa melewati Edge Function, sehingga bebas dari limit memori Deno (HTTP 546).
+            </p>
+          </div>
+          <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+            <span className="font-bold text-indigo-400 flex items-center gap-1.5">
+              <Database className="w-4 h-4" />
+              2. Supabase Cloud (Catalog & Auth)
+            </span>
+            <p className="text-[11px] text-slate-400">
+              Menyimpan katalog aplikasi (<code className="text-indigo-300 font-mono">public.apps</code>), paket produk, kontak, dan otentikasi Owner melalui Row Level Security (RLS).
+            </p>
+          </div>
         </div>
       </div>
     </div>
