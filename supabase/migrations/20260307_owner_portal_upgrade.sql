@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- SKEMA RESMI DATABASE SUPABASE ALCO HUB (Aladzan Corpora)
--- Versi: 2.0 (Dynamic Product Packs, Access Model & Trial Metadata)
+-- Versi: 2.1 (Dynamic Product Packs, Access Model & Trial Metadata)
 -- ==============================================================================
 
 -- 1. TABEL PRODUCT PACKS (product_packs)
@@ -13,28 +13,53 @@ CREATE TABLE IF NOT EXISTS public.product_packs (
     accent TEXT DEFAULT 'purple',
     badge TEXT,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'coming-soon')),
+    tool_count INTEGER DEFAULT 0,
     is_custom BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Pastikan semua kolom product_packs tersedia jika tabel sudah ada sebelumnya
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'product_packs' AND column_name = 'tool_count') THEN
+        ALTER TABLE public.product_packs ADD COLUMN tool_count INTEGER DEFAULT 0;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'product_packs' AND column_name = 'category') THEN
+        ALTER TABLE public.product_packs ADD COLUMN category TEXT DEFAULT 'Ecosystem Pack';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'product_packs' AND column_name = 'accent') THEN
+        ALTER TABLE public.product_packs ADD COLUMN accent TEXT DEFAULT 'purple';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'product_packs' AND column_name = 'is_custom') THEN
+        ALTER TABLE public.product_packs ADD COLUMN is_custom BOOLEAN DEFAULT FALSE;
+    END IF;
+END $$;
+
 -- Indexing untuk filter status
 CREATE INDEX IF NOT EXISTS idx_product_packs_status ON public.product_packs(status);
 
--- Seed Default Product Packs
-INSERT INTO public.product_packs (id, name, tagline, description, category, accent, badge, status, is_custom)
+-- Seed Default Product Packs (Aman dieksekusi berulang dengan ON CONFLICT)
+INSERT INTO public.product_packs (id, name, tagline, description, category, accent, badge, status, tool_count, is_custom)
 VALUES 
-    ('core-system', 'Core Business System', 'Sistem Inti Operasional & Strategi Bisnis', 'Koleksi aplikasi pondasi dan arsitektur bisnis utama Aladzan Corpora.', 'Core System', 'purple', 'Sistem Inti', 'active', false),
-    ('meta-ads', 'Meta Ads Starter Pack', 'Eksekusi & Optimasi Iklan Facebook & Instagram', 'Perangkat lengkap perancangan copy, struktur kampanye, dan monitoring iklan Meta.', 'Marketing & Ads', 'emerald', 'Starter Pack', 'active', false),
-    ('content-creator', 'Content Creator Pack', 'Produksi Konten, Video Hook & Scriptwriting', 'Perangkat kreasi konten video vertikal, riset topik viral, dan pembuatan script.', 'Content Engine', 'cyan', 'Creator Pack', 'active', false),
-    ('creative-system', 'Creative & Offer Suite', 'Formula Penawaran & Visual Direct Response', 'Generator angle penawaran, validasi positioning produk, dan landing page high-converting.', 'Creative Suite', 'orange', 'Pro Suite', 'active', false),
-    ('intelligence-hub', 'ALCO Intelligence & Tools', 'Riset Pasar, Audit & Ekstraksi Data', 'Perangkat riset pasar, audit funnel, kalkulator margin, dan intelijen kompetitor.', 'Tools & Utilities', 'indigo', 'Intelligence', 'active', false)
+    ('core-system', 'Core System', 'Fondasi Utama Ekosistem Bisnis & Konten', 'Rangkaian alat inti untuk merancang strategi, memproduksi konten harian, dan menghasilkan video promosi.', 'Ecosystem Foundation', 'purple', 'Core Suite', 'active', 4, false),
+    ('meta-ads-starter', 'Meta Ads Starter Pack', 'AI tools for launching and optimizing Meta Ads', 'Paket terintegrasi khusus untuk riset kompetitor, optimasi landing page, dan evaluasi performa campaign iklan berbayar.', 'Advertising & Growth', 'emerald', '3 Tools Included', 'active', 3, false),
+    ('content-creator-pack', 'Content Creator Pack', 'Produksi Konten, Video Hook & Scriptwriting', 'Alat khusus otomasi storytelling, audio synthesis, dan multi-channel publishing.', 'Content Engine', 'cyan', 'Creator Pack', 'coming-soon', 0, false),
+    ('product-research-pack', 'Product Research Pack', 'Deep Market Intelligence & Scraping', 'Deep market intelligence, customer sentiment scraping, dan niche validator.', 'Research & Analytics', 'indigo', 'Intelligence', 'coming-soon', 0, false),
+    ('selling-tools-pack', 'Selling Tools Pack', 'Funnel Optimizer & Offer Stacking', 'Checkout funnel optimizer, follow-up bot generator, dan offer stacking calculator.', 'Sales & Conversion', 'orange', 'Pro Suite', 'coming-soon', 0, false)
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     tagline = EXCLUDED.tagline,
     description = EXCLUDED.description,
+    category = EXCLUDED.category,
     accent = EXCLUDED.accent,
-    badge = EXCLUDED.badge;
+    badge = EXCLUDED.badge,
+    status = EXCLUDED.status,
+    tool_count = EXCLUDED.tool_count,
+    updated_at = NOW();
 
 -- 2. TABEL APLIKASI (apps)
 CREATE TABLE IF NOT EXISTS public.apps (
@@ -68,6 +93,10 @@ CREATE TABLE IF NOT EXISTS public.apps (
 -- Pastikan kolom baru tersedia jika tabel apps sudah ada sebelumnya
 DO $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'apps' AND column_name = 'pack_id') THEN
+        ALTER TABLE public.apps ADD COLUMN pack_id TEXT DEFAULT 'core-system';
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'apps' AND column_name = 'access_model') THEN
         ALTER TABLE public.apps ADD COLUMN access_model TEXT DEFAULT 'licensed' CHECK (access_model IN ('free', 'licensed', 'trial', 'coming-soon'));
     END IF;
@@ -124,6 +153,9 @@ DROP POLICY IF EXISTS "Owners have full access to product packs" ON public.produ
 CREATE POLICY "Owners have full access to product packs" ON public.product_packs
     FOR ALL TO authenticated USING (
         EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    )
+    WITH CHECK (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
     );
 
 -- 7. POLICIES: apps
@@ -137,6 +169,9 @@ DROP POLICY IF EXISTS "Owners have full access to apps" ON public.apps;
 CREATE POLICY "Owners have full access to apps" ON public.apps 
     FOR ALL TO authenticated USING (
         EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    )
+    WITH CHECK (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
     );
 
 -- 8. POLICIES: alco_contact
@@ -147,6 +182,9 @@ CREATE POLICY "Public read alco_contact" ON public.alco_contact
 DROP POLICY IF EXISTS "Owners update alco_contact" ON public.alco_contact;
 CREATE POLICY "Owners update alco_contact" ON public.alco_contact 
     FOR ALL TO authenticated USING (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    )
+    WITH CHECK (
         EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
     );
 
