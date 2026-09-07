@@ -826,10 +826,13 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
                   publishMode === 'direct-pat' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'
                 }`}
               >
-                <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
-                <div>
-                  <div className="font-bold">Direct In-App Stream</div>
-                  <div className="text-[10px] text-slate-400 font-normal">Browser HTTP Stream via GitHub PAT</div>
+                <UploadCloud className="w-3.5 h-3.5 text-amber-400" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold flex items-center justify-between">
+                    <span>Direct In-App Stream</span>
+                    <span className="text-[9px] font-mono px-1 py-0.2 bg-amber-500/20 text-amber-300 rounded uppercase">Deprecated</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-normal">Browser HTTP Stream via GitHub PAT (Legacy)</div>
                 </div>
               </button>
             </div>
@@ -1541,12 +1544,17 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
           className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6"
         >
           <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-1">
-            <div className="font-bold flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-              <span>Direct In-App Stream (Browser HTTP Upload via PAT)</span>
+            <div className="font-bold flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Direct In-App Stream (Browser HTTP Upload via PAT)</span>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
+                Deprecated / Advanced
+              </span>
             </div>
             <p className="text-[11px] text-amber-200/90 leading-relaxed">
-              Mode alternatif menggunakan GitHub Personal Access Token (PAT) di sesi browser untuk mengunggah file.
+              Jalur alternatif warisan (legacy) untuk mengunggah file langsung dari browser HTTP menggunakan Personal Access Token. Workflow resmi dan utama ALCO Hub adalah <strong>One-Click UI Release</strong> via GitHub CLI tanpa memerlukan PAT.
             </p>
           </div>
 

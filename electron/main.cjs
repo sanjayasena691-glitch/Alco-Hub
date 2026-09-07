@@ -829,8 +829,30 @@ ipcMain.handle('check-content-engine-update', async () => {
 // ==========================================
 
 /**
+ * Resolves the GitHub CLI executable path or command name.
+ * On Windows, checks standard PATH or known installation locations.
+ */
+function resolveGhExecutable() {
+  if (process.platform === 'win32') {
+    const defaultPaths = [
+      path.join(process.env.LOCALAPPDATA || '', 'Programs', 'GitHub CLI', 'gh.exe'),
+      path.join(process.env.ProgramFiles || 'C:\\Program Files', 'GitHub CLI', 'gh.exe'),
+      path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'GitHub CLI', 'gh.exe'),
+    ];
+    for (const testPath of defaultPaths) {
+      if (testPath && fs.existsSync(testPath)) {
+        return testPath;
+      }
+    }
+    return 'gh.exe';
+  }
+  return 'gh';
+}
+
+/**
  * Executes a GitHub CLI (gh) command with structured arguments.
- * Uses child_process.spawn to avoid shell string injection vulnerabilities.
+ * Uses child_process.spawn directly WITHOUT shell invocation (shell: false)
+ * to eliminate command injection risks and ensure exact handling of paths with spaces or parentheses.
  * @param {string[]} args
  * @param {object} [options]
  * @returns {Promise<{ code: number, stdout: string, stderr: string, error?: Error }>}
@@ -838,10 +860,13 @@ ipcMain.handle('check-content-engine-update', async () => {
 function execGhCommand(args, options = {}) {
   return new Promise((resolve) => {
     try {
-      const proc = spawn('gh', args, {
+      const ghExe = resolveGhExecutable();
+      const { onStdout, onStderr, ...spawnOptions } = options;
+
+      const proc = spawn(ghExe, args, {
         windowsHide: true,
-        shell: process.platform === 'win32',
-        ...options,
+        shell: false,
+        ...spawnOptions,
       });
 
       let stdout = '';
@@ -851,7 +876,7 @@ function execGhCommand(args, options = {}) {
         proc.stdout.on('data', (data) => {
           const str = data.toString();
           stdout += str;
-          if (typeof options.onStdout === 'function') options.onStdout(str);
+          if (typeof onStdout === 'function') onStdout(str);
         });
       }
 
@@ -859,7 +884,7 @@ function execGhCommand(args, options = {}) {
         proc.stderr.on('data', (data) => {
           const str = data.toString();
           stderr += str;
-          if (typeof options.onStderr === 'function') options.onStderr(str);
+          if (typeof onStderr === 'function') onStderr(str);
         });
       }
 

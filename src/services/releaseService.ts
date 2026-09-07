@@ -1,13 +1,16 @@
 /**
- * ALCO Hub - Release Publisher & Management Service (Direct GitHub Releases Architecture)
+ * ALCO Hub - Release Publisher & Management Service
  * 
- * Arsitektur Rilis Resmi:
- * 1. Menghitung SHA-256 Checksum file installer di browser secara aman sebelum diunggah (Web Crypto API)
- * 2. Mengunggah binary installer .exe LANGSUNG ke GitHub Releases API via direct stream (Bebas dari limit memori Edge Function)
- * 3. Memantau progres unggahan secara real-time via XHR Progress Events
- * 4. Menerima browser_download_url resmi dari GitHub Releases
- * 5. Memperbarui metadata katalog di Supabase (public.apps) menggunakan sesi terautentikasi Owner
- * 6. Kredensial GitHub (PAT) disimpan hanya di sesi Owner lokal (sessionStorage/memory), tidak pernah dibundel ke installer publik.
+ * Official Primary Workflow:
+ * 1. Owner memilih aplikasi dan file installer Windows (.exe).
+ * 2. Menghitung SHA-256 Checksum lokal secara instan.
+ * 3. Electron Main Process mengeksekusi GitHub CLI (gh) secara aman (spawn tanpa shell injection).
+ * 4. GitHub Release dibuat/diverifikasi dan installer diunggah dengan opsi --clobber.
+ * 5. Metadata rilis (versi terbaru, downloadUrl, sha256) disinkronkan otomatis ke Supabase public.apps.
+ * 6. Tidak memerlukan PAT, terminal manual, atau binary upload Edge Function.
+ * 
+ * Legacy / Advanced Fallback:
+ * - Direct In-App Browser Stream (via GitHub Personal Access Token) ditandai sebagai @deprecated dan hanya dapat diakses melalui menu Advanced Tools.
  */
 
 import { EcosystemApp, ReleaseUploadProgress } from '../types';
@@ -122,7 +125,9 @@ export interface PublishResult {
 }
 
 /**
- * Eksekusi Alur Rilis Direct ke GitHub Releases & Update Supabase
+ * @deprecated Legacy Fallback: Eksekusi Alur Rilis Direct ke GitHub Releases via Browser HTTP PAT Stream & Update Supabase.
+ * Workflow resmi dan default adalah One-Click GitHub CLI (`executeOneClickRelease`).
+ * Jalur ini hanya disediakan di bawah menu "Advanced Tools" untuk situasi khusus di luar desktop runtime.
  */
 export async function uploadAndPublishRelease({
   app,
