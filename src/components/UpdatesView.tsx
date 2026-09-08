@@ -1,6 +1,6 @@
 /**
  * ALCO Hub - Updates View
- * Mengelola pembaruan aplikasi ekosistem dan memastikan lisensi pengguna tetap utuh setelah update.
+ * Mengelola pembaruan aplikasi ekosistem ALCO.
  */
 
 import React, { useState } from 'react';
@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Download,
-  ShieldCheck,
   Sparkles,
   ExternalLink,
   RotateCw,
@@ -18,15 +17,12 @@ import {
   EcosystemApp,
   ContentEngineUpdateResult,
   ContentEngineUpdateStatus,
-  UserLicense,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
-import { isAppLicensed } from '../services/storeService';
 
 interface UpdatesViewProps {
   apps: EcosystemApp[];
-  userLicenses: Record<string, UserLicense>;
   localInstallations?: Record<string, AppLocalInstallation>;
   installProgressMap?: Record<string, AppInstallProgress>;
   updateResult: ContentEngineUpdateResult | null;
@@ -38,7 +34,6 @@ interface UpdatesViewProps {
 
 export const UpdatesView: React.FC<UpdatesViewProps> = ({
   apps,
-  userLicenses,
   localInstallations = {},
   installProgressMap = {},
   updateResult,
@@ -70,7 +65,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
     setTimeout(() => {
       onPerformUpdate(app);
       setUpdatingAppId(null);
-      setUpdatedNotice(`Aplikasi ${app.name} berhasil diperbarui ke versi v${app.latestVersion}. Lisensi Anda tetap aktif.`);
+      setUpdatedNotice(`Aplikasi ${app.name} berhasil diperbarui ke versi v${app.latestVersion}.`);
       setTimeout(() => setUpdatedNotice(null), 4000);
     }, 1200);
   };
@@ -100,17 +95,6 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
         </button>
       </div>
 
-      {/* Safety & Persistence Notice */}
-      <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-300 flex items-start gap-3">
-        <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
-        <div className="space-y-1">
-          <p className="font-bold text-white">Jaminan Keamanan Lisensi ALCO</p>
-          <p className="text-slate-300 leading-relaxed">
-            Pembaruan versi aplikasi tidak akan pernah menghapus, mereset, atau mengubah status kepemilikan lisensi Anda. Seluruh kunci aktivasi tetap tersimpan aman.
-          </p>
-        </div>
-      </div>
-
       {updatedNotice && (
         <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300 flex items-center gap-2.5 animate-in fade-in">
           <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
@@ -130,7 +114,6 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
           <div className="grid grid-cols-1 gap-4">
             {appsWithUpdates.map((app) => {
               const isUpdating = updatingAppId === app.id;
-              const isLicensed = isAppLicensed(app, userLicenses);
 
               return (
                 <div
@@ -145,12 +128,6 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">
                           Update Available
                         </span>
-                        {isLicensed && (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 flex items-center gap-1">
-                            <ShieldCheck className="w-3 h-3" />
-                            Lisensi Aktif
-                          </span>
-                        )}
                       </div>
                       <p className="text-xs text-slate-400">{app.functionLabel}</p>
                       <p className="text-xs font-mono text-slate-300 pt-1">
@@ -204,7 +181,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
       {/* Version Registry Table */}
       <div className="space-y-3 pt-4 border-t border-slate-800">
         <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-          Installed Applications Inventory ({apps.length})
+          Applications Inventory ({apps.length})
         </h3>
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden divide-y divide-slate-800/80">
           {apps.map((app) => (

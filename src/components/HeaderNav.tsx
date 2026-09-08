@@ -24,7 +24,7 @@ interface HeaderNavProps {
   apiKey: string;
   onRequestApiKey: () => void;
   updateStatus: ContentEngineUpdateStatus;
-  activeLicensesCount?: number;
+  installedCount?: number;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -33,7 +33,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   apiKey,
   onRequestApiKey,
   updateStatus,
-  activeLicensesCount = 0,
+  installedCount = 0,
 }) => {
   const hasUpdate = updateStatus === 'update-available';
 
@@ -52,9 +52,9 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
       id: 'library',
       label: 'MY APPS',
       icon: <Grid className="w-4 h-4" aria-hidden="true" />,
-      badge: activeLicensesCount > 0 ? (
+      badge: installedCount > 0 ? (
         <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-indigo-500 text-white">
-          {activeLicensesCount}
+          {installedCount}
         </span>
       ) : undefined,
     },

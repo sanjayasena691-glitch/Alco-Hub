@@ -1,6 +1,6 @@
 /**
  * ALCO Hub - Packs Directory & Pack Detail Inspector
- * Menampilkan katalog pack produk beserta status alat (INSTALLED, OWNED, NOT OWNED, COMING SOON).
+ * Menampilkan katalog pack produk beserta status alat (INSTALLED, FREE, LICENSED, COMING SOON).
  */
 
 import React, { useState } from 'react';
@@ -8,32 +8,27 @@ import {
   Layers,
   ChevronRight,
   X,
-  ShieldCheck,
-  Lock,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   EcosystemPack,
   EcosystemApp,
   ContentEngineUpdateResult,
   ContentEngineUpdateStatus,
-  UserLicense,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
 import { FUTURE_PACK_CATEGORIES } from '../config/ecosystemPacks';
 import { ApplicationCard } from './ApplicationCard';
-import { isAppLicensed } from '../services/storeService';
 
 interface PacksViewProps {
   packs: EcosystemPack[];
   apps: EcosystemApp[];
-  userLicenses: Record<string, UserLicense>;
   localInstallations?: Record<string, AppLocalInstallation>;
   installProgressMap?: Record<string, AppInstallProgress>;
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
-  onRequestLicense: (app: EcosystemApp) => void;
   updateResult: ContentEngineUpdateResult | null;
   updateStatus: ContentEngineUpdateStatus;
 }
@@ -41,13 +36,11 @@ interface PacksViewProps {
 export const PacksView: React.FC<PacksViewProps> = ({
   packs,
   apps,
-  userLicenses,
   localInstallations = {},
   installProgressMap = {},
   onOpenApp,
   onInstallApp,
   onUpdateApp,
-  onRequestLicense,
   updateResult,
   updateStatus,
 }) => {
@@ -112,7 +105,8 @@ export const PacksView: React.FC<PacksViewProps> = ({
                     </span>
                     <div className="grid grid-cols-1 gap-2">
                       {packApps.map((app) => {
-                        const isLicensed = isAppLicensed(app, userLicenses);
+                        const canonicalId = app.appId || app.id;
+                        const isInstalled = Boolean(localInstallations[canonicalId]?.isInstalled || localInstallations[app.id]?.isInstalled);
                         return (
                           <div
                             key={app.id}
@@ -123,7 +117,7 @@ export const PacksView: React.FC<PacksViewProps> = ({
                                 className={`w-2 h-2 rounded-full shrink-0 ${
                                   app.comingSoon
                                     ? 'bg-slate-600'
-                                    : isLicensed
+                                    : isInstalled
                                       ? 'bg-emerald-400'
                                       : 'bg-indigo-400'
                                 }`}
@@ -135,9 +129,11 @@ export const PacksView: React.FC<PacksViewProps> = ({
                             <span className="text-[10px] text-slate-400 font-medium shrink-0">
                               {app.comingSoon
                                 ? 'Coming Soon'
-                                : isLicensed
-                                  ? 'Licensed'
-                                  : app.priceLabel || 'Needs License'}
+                                : isInstalled
+                                  ? 'Installed'
+                                  : app.pricingType === 'free'
+                                    ? 'Free'
+                                    : app.priceLabel || 'Commercial'}
                             </span>
                           </div>
                         );
@@ -244,7 +240,6 @@ export const PacksView: React.FC<PacksViewProps> = ({
                     <ApplicationCard
                       key={app.id}
                       app={app}
-                      userLicenses={userLicenses}
                       installation={localInstallations[canonicalId] || localInstallations[app.id]}
                       installProgress={installProgressMap[canonicalId] || installProgressMap[app.id]}
                       onOpenApp={(a) => {
@@ -258,10 +253,6 @@ export const PacksView: React.FC<PacksViewProps> = ({
                       onUpdateApp={(a) => {
                         setSelectedPackId(null);
                         onUpdateApp(a);
-                      }}
-                      onRequestLicense={(a) => {
-                        setSelectedPackId(null);
-                        onRequestLicense(a);
                       }}
                       updateResult={updateResult}
                       updateStatus={updateStatus}

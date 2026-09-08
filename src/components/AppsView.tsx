@@ -20,25 +20,21 @@ import {
   EcosystemPack,
   ContentEngineUpdateResult,
   ContentEngineUpdateStatus,
-  UserLicense,
   SyncMeta,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
 import { ApplicationCard } from './ApplicationCard';
-import { isAppLicensed } from '../services/storeService';
 
 interface AppsViewProps {
   apps: EcosystemApp[];
   packs: EcosystemPack[];
-  userLicenses: Record<string, UserLicense>;
   localInstallations?: Record<string, AppLocalInstallation>;
   installProgressMap?: Record<string, AppInstallProgress>;
   syncMeta: SyncMeta;
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
-  onRequestLicense: (app: EcosystemApp) => void;
   onSyncCatalog: () => void;
   updateResult: ContentEngineUpdateResult | null;
   updateStatus: ContentEngineUpdateStatus;
@@ -47,14 +43,12 @@ interface AppsViewProps {
 export const AppsView: React.FC<AppsViewProps> = ({
   apps,
   packs,
-  userLicenses,
   localInstallations = {},
   installProgressMap = {},
   syncMeta,
   onOpenApp,
   onInstallApp,
   onUpdateApp,
-  onRequestLicense,
   onSyncCatalog,
   updateResult,
   updateStatus,
@@ -84,8 +78,6 @@ export const AppsView: React.FC<AppsViewProps> = ({
         if (app.pricingType !== 'free') return false;
       } else if (selectedPricingFilter === 'licensed') {
         if (app.pricingType !== 'licensed') return false;
-      } else if (selectedPricingFilter === 'owned') {
-        if (!isAppLicensed(app, userLicenses)) return false;
       } else if (selectedPricingFilter === 'installed') {
         const canonicalId = app.appId || app.id;
         const inst = localInstallations[canonicalId] || localInstallations[app.id];
@@ -96,7 +88,7 @@ export const AppsView: React.FC<AppsViewProps> = ({
 
       return true;
     });
-  }, [apps, searchQuery, selectedPackFilter, selectedPricingFilter, userLicenses, localInstallations]);
+  }, [apps, searchQuery, selectedPackFilter, selectedPricingFilter, localInstallations]);
 
   return (
     <div id="alco-apps-view" className="space-y-8">
@@ -184,10 +176,9 @@ export const AppsView: React.FC<AppsViewProps> = ({
             onChange={(e) => setSelectedPricingFilter(e.target.value)}
             className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
           >
-            <option value="all">Semua Tipe Lisensi</option>
+            <option value="all">Semua Tipe Aplikasi</option>
             <option value="installed">Terpasang di Komputer (Installed)</option>
-            <option value="owned">Aplikasi yang Saya Miliki</option>
-            <option value="licensed">Berlisensi Resmi</option>
+            <option value="licensed">Aplikasi Komersial (Licensed)</option>
             <option value="free">Gratis (Free Tools)</option>
             <option value="coming-soon">Coming Soon</option>
           </select>
@@ -203,13 +194,11 @@ export const AppsView: React.FC<AppsViewProps> = ({
               <ApplicationCard
                 key={app.id}
                 app={app}
-                userLicenses={userLicenses}
                 installation={localInstallations[canonicalId] || localInstallations[app.id]}
                 installProgress={installProgressMap[canonicalId] || installProgressMap[app.id]}
                 onOpenApp={onOpenApp}
                 onInstallApp={onInstallApp}
                 onUpdateApp={onUpdateApp}
-                onRequestLicense={onRequestLicense}
                 updateResult={updateResult}
                 updateStatus={updateStatus}
               />

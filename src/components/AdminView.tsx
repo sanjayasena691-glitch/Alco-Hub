@@ -719,43 +719,66 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </div>
       )}
 
-      {/* TAB: LICENSE GENERATOR */}
+      {/* TAB: LICENSE ARCHITECTURE & GENERATOR */}
       {activeTab === 'licenses' && (
         <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6">
           <div className="space-y-1">
-            <h3 className="text-base font-bold text-white">Generator License Key Resmi ALCO</h3>
+            <h3 className="text-base font-bold text-white">Arsitektur Lisensi Aplikasi ALCO</h3>
             <p className="text-xs text-slate-400">
-              Buat lisensi resmi yang dapat diberikan kepada pembeli setelah mereka menyelesaikan pembayaran manual via WhatsApp.
+              Lisensi aplikasi komersial diverifikasi mandiri oleh masing-masing aplikasi (In-App Verification) menggunakan Request Code dan License Code dari generator terpisah milik Owner.
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center gap-3">
-            <select
-              value={selectedAppForLicense}
-              onChange={(e) => setSelectedAppForLicense(e.target.value)}
-              className="w-full sm:w-80 px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
-            >
-              {apps
-                .filter((a) => a.pricingType === 'licensed' || a.pricingType === 'trial')
-                .map((a) => (
-                  <option key={a.id} value={a.id}>{a.name} ({a.priceLabel})</option>
-                ))}
-            </select>
+          <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-300 space-y-2">
+            <p className="font-bold text-white flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-indigo-400" />
+              <span>Workflow Lisensi Resmi ALCO:</span>
+            </p>
+            <ol className="list-decimal list-inside space-y-1 text-slate-300 leading-relaxed pl-1">
+              <li>User membuka aplikasi desktop yang terpasang melalui ALCO Hub.</li>
+              <li>Aplikasi memeriksa lisensinya sendiri saat dijalankan.</li>
+              <li>Jika belum aktif, aplikasi menampilkan Request Code kepada user.</li>
+              <li>User mengirim Request Code ke Owner via WhatsApp.</li>
+              <li>Owner menggunakan <strong>ALCO License Generator eksternal</strong> (Private Key aman offline) untuk menghasilkan License Code.</li>
+              <li>User memasukkan License Code langsung ke dalam aplikasi untuk aktivasi permanen.</li>
+            </ol>
+            <p className="text-[11px] text-slate-400 pt-1">
+              * ALCO Hub bertindak sebagai Catalog, Downloader, Installer, Updater, dan Launcher murni tanpa memblokir proses pembukaan aplikasi.
+            </p>
+          </div>
 
-            <button
-              type="button"
-              onClick={handleGenerateKey}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md"
-            >
-              <Key className="w-4 h-4" />
-              <span>Generate License Key Baru</span>
-            </button>
+          <div className="space-y-3 pt-2">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Legacy Key Preview Utility
+            </h4>
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <select
+                value={selectedAppForLicense}
+                onChange={(e) => setSelectedAppForLicense(e.target.value)}
+                className="w-full sm:w-80 px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
+              >
+                {apps
+                  .filter((a) => a.pricingType === 'licensed' || a.pricingType === 'trial')
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.priceLabel})</option>
+                  ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={handleGenerateKey}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md"
+              >
+                <Key className="w-4 h-4" />
+                <span>Generate Sample Token</span>
+              </button>
+            </div>
           </div>
 
           {/* Generated Keys List */}
           <div className="space-y-3 pt-4 border-t border-slate-800">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-              Riwayat Lisensi yang Dibuat pada Sesi Ini ({generatedKeys.length})
+              Sample Generated Tokens ({generatedKeys.length})
             </span>
 
             {generatedKeys.length > 0 ? (
@@ -774,7 +797,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-slate-500 italic">Belum ada key yang dibuat pada sesi ini.</p>
+              <p className="text-xs text-slate-500 italic">Belum ada token yang dibuat pada sesi ini.</p>
             )}
           </div>
         </div>

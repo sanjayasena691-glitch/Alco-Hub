@@ -21,7 +21,6 @@ import {
   ContentEngineUpdateResult,
   ContentEngineUpdateStatus,
   NavigationTab,
-  UserLicense,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
@@ -33,14 +32,12 @@ interface HomeViewProps {
   coreApps: EcosystemApp[];
   packs: EcosystemPack[];
   allApps: EcosystemApp[];
-  userLicenses: Record<string, UserLicense>;
   localInstallations?: Record<string, AppLocalInstallation>;
   installProgressMap?: Record<string, AppInstallProgress>;
   recentApp: EcosystemApp | undefined;
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
-  onRequestLicense: (app: EcosystemApp) => void;
   onExplorePack: (pack: EcosystemPack) => void;
   onNavigateTab: (tab: NavigationTab) => void;
   updateResult: ContentEngineUpdateResult | null;
@@ -53,14 +50,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
   coreApps,
   packs,
   allApps,
-  userLicenses,
   localInstallations = {},
   installProgressMap = {},
   recentApp,
   onOpenApp,
   onInstallApp,
   onUpdateApp,
-  onRequestLicense,
   onExplorePack,
   onNavigateTab,
   updateResult,
@@ -175,13 +170,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <ApplicationCard
                 key={app.id}
                 app={app}
-                userLicenses={userLicenses}
                 installation={localInstallations[canonicalId] || localInstallations[app.id]}
                 installProgress={installProgressMap[canonicalId] || installProgressMap[app.id]}
                 onOpenApp={onOpenApp}
                 onInstallApp={onInstallApp}
                 onUpdateApp={onUpdateApp}
-                onRequestLicense={onRequestLicense}
                 updateResult={updateResult}
                 updateStatus={updateStatus}
               />

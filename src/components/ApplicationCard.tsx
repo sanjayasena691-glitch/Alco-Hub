@@ -22,7 +22,6 @@ import {
   CheckCircle2,
   Clock,
   ShieldCheck,
-  Lock,
   Download,
   RefreshCw,
   FileCheck2,
@@ -32,21 +31,17 @@ import {
   ProductAccent,
   ProductIconName,
   ContentEngineUpdateResult,
-  UserLicense,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
-import { isAppLicensed } from '../services/storeService';
 
 interface ApplicationCardProps {
   app: EcosystemApp;
-  userLicenses?: Record<string, UserLicense>;
   installation?: AppLocalInstallation;
   installProgress?: AppInstallProgress;
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp?: (app: EcosystemApp) => void;
-  onRequestLicense?: (app: EcosystemApp) => void;
   updateResult?: ContentEngineUpdateResult | null;
   updateStatus?: 'checking' | 'up-to-date' | 'update-available' | 'unable-to-check';
   featured?: boolean;
@@ -159,13 +154,11 @@ const ACCENT_STYLES: Record<
 
 export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   app,
-  userLicenses = {},
   installation,
   installProgress,
   onOpenApp,
   onInstallApp,
   onUpdateApp,
-  onRequestLicense,
   updateResult,
   updateStatus,
   featured = false,
@@ -173,7 +166,6 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   const accent = ACCENT_STYLES[app.accent] || ACCENT_STYLES.purple;
   const isComingSoon = app.pricingType === 'coming-soon' || app.comingSoon;
   const isFree = app.pricingType === 'free';
-  const isLicensed = isAppLicensed(app, userLicenses);
   const isInstalled = Boolean(installation?.isInstalled);
 
   const isDownloading = installProgress?.status === 'downloading';
@@ -315,21 +307,21 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" aria-hidden="true" />
                 <span>Free Tool</span>
               </span>
-            ) : isLicensed ? (
+            ) : app.pricingType === 'trial' ? (
               <span
                 id={`app-status-badge-${app.id}`}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
               >
-                <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" aria-hidden="true" />
-                <span>Lisensi Aktif</span>
+                <Clock className="w-3 h-3 text-amber-400 shrink-0" aria-hidden="true" />
+                <span>Trial {app.trialDurationDays ? `${app.trialDurationDays}D` : ''}</span>
               </span>
             ) : (
               <span
                 id={`app-status-badge-${app.id}`}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/25"
               >
-                <Lock className="w-3 h-3 text-indigo-400 shrink-0" aria-hidden="true" />
-                <span>Requires License</span>
+                <ShieldCheck className="w-3 h-3 text-indigo-400 shrink-0" aria-hidden="true" />
+                <span>Licensed Product</span>
               </span>
             )}
           </div>
@@ -502,36 +494,24 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
             <span>Buka {app.shortName}</span>
             <ArrowUpRight className="w-3.5 h-3.5 text-slate-600" aria-hidden="true" />
           </button>
-        ) : isLicensed || isFree ? (
-          app.downloadUrl && app.sha256 ? (
-            <button
-              id={`app-btn-install-${app.id}`}
-              type="button"
-              onClick={() => onInstallApp && onInstallApp(app)}
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Install {app.shortName} (v{app.latestVersion || app.version})</span>
-            </button>
-          ) : (
-            <button
-              id={`app-btn-no-download-${app.id}`}
-              type="button"
-              disabled
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 text-slate-500 text-xs font-semibold cursor-not-allowed border border-slate-700/50"
-            >
-              <span>Download Belum Tersedia</span>
-            </button>
-          )
+        ) : app.downloadUrl && app.sha256 ? (
+          <button
+            id={`app-btn-install-${app.id}`}
+            type="button"
+            onClick={() => onInstallApp && onInstallApp(app)}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Install {app.shortName} (v{app.latestVersion || app.version})</span>
+          </button>
         ) : (
           <button
-            id={`app-btn-license-${app.id}`}
+            id={`app-btn-no-download-${app.id}`}
             type="button"
-            onClick={() => onRequestLicense && onRequestLicense(app)}
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99]"
+            disabled
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 text-slate-500 text-xs font-semibold cursor-not-allowed border border-slate-700/50"
           >
-            <Lock className="w-3.5 h-3.5" />
-            <span>Get License</span>
+            <span>Download Belum Tersedia</span>
           </button>
         )}
       </div>
