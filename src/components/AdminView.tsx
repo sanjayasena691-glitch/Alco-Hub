@@ -28,6 +28,7 @@ import {
   Layers,
   Clock,
   AlertTriangle,
+  Bell,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -38,6 +39,7 @@ import {
   ContactAlcoConfig,
   AdminAuthSession,
   SyncMeta,
+  BroadcastNotification,
 } from '../types';
 import {
   generateLicenseKey,
@@ -55,6 +57,7 @@ import {
 } from '../services/storeService';
 import { ReleaseManager } from './ReleaseManager';
 import { ProductPacksManager } from './admin/ProductPacksManager';
+import { NotificationManager } from './admin/NotificationManager';
 import { AppRegistrationForm } from './admin/AppRegistrationForm';
 import { SqlSchemaViewer } from './admin/SqlSchemaViewer';
 import { ECOSYSTEM_PACKS } from '../config/ecosystemPacks';
@@ -62,38 +65,40 @@ import { sanitizeAppId } from '../utils/versioning';
 
 interface AdminViewProps {
   apps: EcosystemApp[];
+  packs: EcosystemPack[];
   contactConfig: ContactAlcoConfig;
   adminSession: AdminAuthSession;
   syncMeta: SyncMeta;
+  notifications?: BroadcastNotification[];
   onRefreshCatalog: () => void;
   onUpdateCatalog: (newApps: EcosystemApp[]) => void;
+  onUpdatePacks: (newPacks: EcosystemPack[]) => void;
   onUpdateContactConfig: (newConfig: ContactAlcoConfig) => void;
   onAdminAuthChange: (session: AdminAuthSession) => void;
+  onUpdateNotifications?: (updated: BroadcastNotification[]) => void;
 }
 
 export const AdminView: React.FC<AdminViewProps> = ({
   apps,
+  packs,
   contactConfig,
   adminSession,
   syncMeta,
+  notifications = [],
   onRefreshCatalog,
   onUpdateCatalog,
+  onUpdatePacks,
   onUpdateContactConfig,
   onAdminAuthChange,
+  onUpdateNotifications = () => {},
 }) => {
   // Navigation & Subtabs
   const [activeTab, setActiveTab] = useState<
-    'apps' | 'packs' | 'releases' | 'licenses' | 'updates' | 'contact' | 'supabase'
+    'apps' | 'packs' | 'notifications' | 'releases' | 'licenses' | 'updates' | 'contact' | 'supabase'
   >('apps');
   const [isEditing, setIsEditing] = useState(false);
   const [editingApp, setEditingApp] = useState<EcosystemApp | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Dynamic Product Packs State
-  const [productPacks, setProductPacks] = useState<EcosystemPack[]>(() => {
-    const cached = getCachedPacks();
-    return cached.length > 0 ? cached : ECOSYSTEM_PACKS;
-  });
 
   // Login Form State
   const [loginEmail, setLoginEmail] = useState('');
@@ -130,7 +135,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     const loadPacks = async () => {
       const packsData = await syncProductPacksWithSupabase();
       if (packsData && packsData.length > 0) {
-        setProductPacks(packsData);
+        onUpdatePacks(packsData);
       }
     };
     loadPacks();
@@ -253,8 +258,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
     const res = await saveProductPackToCloud(newPack);
     if (res.success) {
-      const updatedPacks = [...productPacks.filter((p) => p.id !== cleanId), newPack];
-      setProductPacks(updatedPacks);
+      const updatedPacks = [...packs.filter((p) => p.id !== cleanId), newPack];
+      onUpdatePacks(updatedPacks);
       showNotification(`Product Pack "${packName}" berhasil dibuat!`);
       return newPack;
     } else {
@@ -526,7 +531,17 @@ export const AdminView: React.FC<AdminViewProps> = ({
           }`}
         >
           <Layers className="w-3.5 h-3.5 text-purple-400" />
-          <span>Product Packs ({productPacks.length})</span>
+          <span>Product Packs ({packs.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => { setActiveTab('notifications'); setIsEditing(false); }}
+          className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+            activeTab === 'notifications' ? 'bg-amber-600/30 text-amber-300 border border-amber-500/40 shadow-xs' : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Bell className="w-3.5 h-3.5 text-amber-400" />
+          <span>Broadcast Notifications ({notifications.length})</span>
         </button>
         <button
           type="button"
@@ -579,9 +594,18 @@ export const AdminView: React.FC<AdminViewProps> = ({
       {/* TAB: PRODUCT PACKS MANAGER */}
       {activeTab === 'packs' && (
         <ProductPacksManager
-          packs={productPacks}
+          packs={packs}
           apps={apps}
-          onPacksUpdated={(newPacks) => setProductPacks(newPacks)}
+          onPacksUpdated={onUpdatePacks}
+          onShowNotification={showNotification}
+        />
+      )}
+
+      {/* TAB: BROADCAST NOTIFICATIONS MANAGER */}
+      {activeTab === 'notifications' && (
+        <NotificationManager
+          notifications={notifications}
+          onNotificationsUpdated={onUpdateNotifications}
           onShowNotification={showNotification}
         />
       )}
@@ -605,7 +629,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           {isEditing ? (
             <AppRegistrationForm
               initialApp={editingApp}
-              packs={productPacks}
+              packs={packs}
               isSubmitting={isSubmitting}
               onSaveApp={handleSaveApp}
               onCancel={() => {

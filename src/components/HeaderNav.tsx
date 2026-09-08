@@ -14,6 +14,7 @@ import {
   Key,
   Monitor,
   ShieldAlert,
+  Bell,
 } from 'lucide-react';
 import { NavigationTab, ContentEngineUpdateStatus } from '../types';
 import { getMaskedApiKey } from '../services/aiNavigatorService';
@@ -25,6 +26,8 @@ interface HeaderNavProps {
   onRequestApiKey: () => void;
   updateStatus: ContentEngineUpdateStatus;
   installedCount?: number;
+  unreadNotificationCount?: number;
+  onOpenNotifications?: () => void;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -34,6 +37,8 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   onRequestApiKey,
   updateStatus,
   installedCount = 0,
+  unreadNotificationCount = 0,
+  onOpenNotifications,
 }) => {
   const hasUpdate = updateStatus === 'update-available';
 
@@ -153,6 +158,25 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
 
           {/* Right Controls */}
           <div className="flex items-center gap-2.5 shrink-0">
+            {/* Notification Bell */}
+            <button
+              id="header-notification-bell-btn"
+              type="button"
+              onClick={onOpenNotifications}
+              className="relative p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700 transition-colors"
+              title="Pemberitahuan & Pengumuman Resmi ALCO"
+            >
+              <Bell className="w-4 h-4 text-slate-300" />
+              {unreadNotificationCount > 0 && (
+                <span
+                  id="header-notification-badge"
+                  className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 border border-slate-950 shadow-sm flex items-center justify-center min-w-[18px] animate-pulse"
+                >
+                  {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                </span>
+              )}
+            </button>
+
             <button
               id="header-api-key-btn"
               type="button"

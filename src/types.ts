@@ -129,6 +129,23 @@ export interface ContactAlcoConfig {
   defaultPurchaseMessage?: string;
 }
 
+export type NotificationType = 'general' | 'hub_update' | 'new_product' | 'maintenance';
+
+export interface BroadcastNotification {
+  id: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  published: boolean;
+  publishedAt: string;
+  expiresAt?: string | null;
+  actionLabel?: string | null;
+  actionUrl?: string | null;
+  targetVersion?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'cached' | 'offline' | 'unconfigured' | 'error';
 
 export interface SyncMeta {

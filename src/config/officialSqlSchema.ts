@@ -141,13 +141,34 @@ CREATE TABLE IF NOT EXISTS public.admin_users (
     role TEXT NOT NULL DEFAULT 'owner'
 );
 
--- 5. ENABLE ROW LEVEL SECURITY (RLS)
+-- 5. TABEL BROADCAST NOTIFICATIONS (notifications)
+CREATE TABLE IF NOT EXISTS public.notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'general' CHECK (type IN ('general', 'hub_update', 'new_product', 'maintenance')),
+    published BOOLEAN NOT NULL DEFAULT TRUE,
+    published_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    action_label TEXT,
+    action_url TEXT,
+    target_version TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_published ON public.notifications(published);
+CREATE INDEX IF NOT EXISTS idx_notifications_published_at ON public.notifications(published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_type ON public.notifications(type);
+
+-- 6. ENABLE ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.product_packs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.apps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.alco_contact ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
--- 6. POLICIES: product_packs
+-- 7. POLICIES: product_packs
 DROP POLICY IF EXISTS "Public can view active product packs" ON public.product_packs;
 CREATE POLICY "Public can view active product packs" ON public.product_packs
     FOR SELECT TO anon, authenticated USING (status = 'active' OR EXISTS (
@@ -163,7 +184,7 @@ CREATE POLICY "Owners have full access to product packs" ON public.product_packs
         EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
     );
 
--- 7. POLICIES: apps
+-- 8. POLICIES: apps
 DROP POLICY IF EXISTS "Public users can view published apps" ON public.apps;
 CREATE POLICY "Public users can view published apps" ON public.apps 
     FOR SELECT TO anon, authenticated USING (published = true OR EXISTS (
@@ -179,7 +200,7 @@ CREATE POLICY "Owners have full access to apps" ON public.apps
         EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
     );
 
--- 8. POLICIES: alco_contact
+-- 9. POLICIES: alco_contact
 DROP POLICY IF EXISTS "Public read alco_contact" ON public.alco_contact;
 CREATE POLICY "Public read alco_contact" ON public.alco_contact 
     FOR SELECT TO anon, authenticated USING (true);
@@ -193,8 +214,31 @@ CREATE POLICY "Owners update alco_contact" ON public.alco_contact
         EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
     );
 
--- 9. POLICIES: admin_users
+-- 10. POLICIES: admin_users
 DROP POLICY IF EXISTS "Users can read own admin role" ON public.admin_users;
 CREATE POLICY "Users can read own admin role" ON public.admin_users 
     FOR SELECT TO authenticated USING (user_id = auth.uid());
+
+-- 11. POLICIES: notifications
+DROP POLICY IF EXISTS "Public users can view published notifications" ON public.notifications;
+CREATE POLICY "Public users can view published notifications" ON public.notifications
+    FOR SELECT TO anon, authenticated USING (
+        (
+            published = TRUE 
+            AND (expires_at IS NULL OR expires_at > NOW())
+            AND (published_at IS NULL OR published_at <= NOW())
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner'
+        )
+    );
+
+DROP POLICY IF EXISTS "Owners have full access to notifications" ON public.notifications;
+CREATE POLICY "Owners have full access to notifications" ON public.notifications
+    FOR ALL TO authenticated USING (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    )
+    WITH CHECK (
+        EXISTS (SELECT 1 FROM public.admin_users WHERE user_id = auth.uid() AND role = 'owner')
+    );
 `;

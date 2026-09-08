@@ -11,20 +11,23 @@ import {
   ContentEngineUpdateStatus,
   ContentEngineUpdateResult,
   EcosystemApp,
+  EcosystemPack,
   UserLicense,
   ContactAlcoConfig,
   SyncMeta,
   AdminAuthSession,
   AppLocalInstallation,
   AppInstallProgress,
+  BroadcastNotification,
 } from './types';
 import { HUB_META } from './config/ecosystemApps';
-import { ECOSYSTEM_PACKS } from './config/ecosystemPacks';
 import { getUserApiKey } from './services/aiNavigatorService';
 import {
   getCachedApps,
+  getCachedPacks,
   saveCatalogToCache,
   syncCatalogWithSupabase,
+  syncProductPacksWithSupabase,
   getSyncMeta,
   getAdminSession,
   checkAndRestoreOwnerSession,
@@ -32,6 +35,13 @@ import {
   getContactConfig,
   isAppLicensed,
 } from './services/storeService';
+import {
+  getCachedNotifications,
+  getReadNotificationIds,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+  syncNotificationsWithSupabase,
+} from './services/notificationService';
 import {
   checkAllAppsInstallation,
   checkAppInstallation,
@@ -51,6 +61,7 @@ import { AdminView } from './components/AdminView';
 import { SettingsView } from './components/SettingsView';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { LicenseModal } from './components/LicenseModal';
+import { NotificationCenterModal } from './components/NotificationCenterModal';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavigationTab>('home');
@@ -59,12 +70,18 @@ export default function App() {
 
   // Store & Licensing States
   const [apps, setApps] = useState<EcosystemApp[]>(getCachedApps());
+  const [packs, setPacks] = useState<EcosystemPack[]>(getCachedPacks());
   const [userLicenses, setUserLicenses] = useState<Record<string, UserLicense>>(getUserLicenses());
   const [contactConfig, setContactConfig] = useState<ContactAlcoConfig>(getContactConfig());
   const [syncMeta, setSyncMeta] = useState<SyncMeta>(getSyncMeta());
   const [adminSession, setAdminSession] = useState<AdminAuthSession>(getAdminSession());
   const [selectedAppForLicense, setSelectedAppForLicense] = useState<EcosystemApp | null>(null);
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
+
+  // Broadcast Notification States
+  const [notifications, setNotifications] = useState<BroadcastNotification[]>(getCachedNotifications());
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>(getReadNotificationIds());
+  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
 
   // Desktop Local Installations & Progress State
   const [localInstallations, setLocalInstallations] = useState<Record<string, AppLocalInstallation>>({});
@@ -78,6 +95,7 @@ export default function App() {
   useEffect(() => {
     // Read local cache immediately for zero-delay UI rendering
     setApps(getCachedApps());
+    setPacks(getCachedPacks());
     setUserLicenses(getUserLicenses());
     setContactConfig(getContactConfig());
     setSyncMeta(getSyncMeta());
@@ -89,12 +107,18 @@ export default function App() {
       setAdminSession(restored);
 
       // Public user hanya menerima published = true, Owner menerima semua draft
-      const res = await syncCatalogWithSupabase({
-        force: false,
-        isAdmin: restored.isAuthenticated,
-      });
-      setApps(res.apps);
-      setSyncMeta(res.syncMeta);
+      const [catalogRes, syncedPacks, syncedNotifs] = await Promise.all([
+        syncCatalogWithSupabase({
+          force: false,
+          isAdmin: restored.isAuthenticated,
+        }),
+        syncProductPacksWithSupabase(),
+        syncNotificationsWithSupabase(restored.isAuthenticated),
+      ]);
+      setApps(catalogRes.apps);
+      setSyncMeta(catalogRes.syncMeta);
+      setPacks(syncedPacks);
+      setNotifications(syncedNotifs);
     };
 
     initAuthAndCatalog();
@@ -143,16 +167,28 @@ export default function App() {
             mode: 'none',
           };
           setAdminSession(guestSession);
-          // Public user: reload catalog to hide drafts
-          const res = await syncCatalogWithSupabase({ force: true, isAdmin: false });
-          setApps(res.apps);
-          setSyncMeta(res.syncMeta);
+          // Public user: reload catalog and notifications to hide drafts
+          const [catalogRes, syncedPacks, syncedNotifs] = await Promise.all([
+            syncCatalogWithSupabase({ force: true, isAdmin: false }),
+            syncProductPacksWithSupabase(),
+            syncNotificationsWithSupabase(false),
+          ]);
+          setApps(catalogRes.apps);
+          setSyncMeta(catalogRes.syncMeta);
+          setPacks(syncedPacks);
+          setNotifications(syncedNotifs);
         } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
           const verified = await checkAndRestoreOwnerSession();
           setAdminSession(verified);
-          const res = await syncCatalogWithSupabase({ force: true, isAdmin: verified.isAuthenticated });
-          setApps(res.apps);
-          setSyncMeta(res.syncMeta);
+          const [catalogRes, syncedPacks, syncedNotifs] = await Promise.all([
+            syncCatalogWithSupabase({ force: true, isAdmin: verified.isAuthenticated }),
+            syncProductPacksWithSupabase(),
+            syncNotificationsWithSupabase(verified.isAuthenticated),
+          ]);
+          setApps(catalogRes.apps);
+          setSyncMeta(catalogRes.syncMeta);
+          setPacks(syncedPacks);
+          setNotifications(syncedNotifs);
         }
       });
       authSub = data.subscription;
@@ -170,12 +206,18 @@ export default function App() {
   }, []);
 
   const handleCatalogSync = async (force: boolean = false) => {
-    const res = await syncCatalogWithSupabase({
-      force,
-      isAdmin: adminSession.isAuthenticated,
-    });
-    setApps(res.apps);
-    setSyncMeta(res.syncMeta);
+    const [catalogRes, syncedPacks, syncedNotifs] = await Promise.all([
+      syncCatalogWithSupabase({
+        force,
+        isAdmin: adminSession.isAuthenticated,
+      }),
+      syncProductPacksWithSupabase(),
+      syncNotificationsWithSupabase(adminSession.isAuthenticated),
+    ]);
+    setApps(catalogRes.apps);
+    setSyncMeta(catalogRes.syncMeta);
+    setPacks(syncedPacks);
+    setNotifications(syncedNotifs);
 
     // Refresh installation states
     const installed = await checkAllAppsInstallation();
@@ -312,6 +354,12 @@ export default function App() {
   const coreApps = apps.filter((a) => a.packId === 'core-system');
   const recentApp = apps.find((a) => a.id === 'content-engine') || apps[0];
   const activeLicensesCount = Object.keys(userLicenses).length;
+  const installedCount = (Object.values(localInstallations) as AppLocalInstallation[]).filter((i) => i && i.isInstalled).length;
+  const unreadNotificationCount = notifications.filter((n) => {
+    if (!n.published) return false;
+    if (n.expires_at && new Date(n.expires_at).getTime() < Date.now()) return false;
+    return !readNotificationIds.includes(n.id);
+  }).length;
 
   return (
     <div id="alco-hub-app" className="min-h-screen bg-[#0b0f17] text-slate-100 flex flex-col justify-between selection:bg-indigo-500/30 selection:text-indigo-200">
@@ -323,6 +371,9 @@ export default function App() {
         onRequestApiKey={() => setIsApiKeyModalOpen(true)}
         updateStatus={contentEngineUpdateStatus}
         activeLicensesCount={activeLicensesCount}
+        installedCount={installedCount}
+        unreadNotificationCount={unreadNotificationCount}
+        onOpenNotifications={() => setIsNotificationCenterOpen(true)}
       />
 
       {/* 2. Main Content Canvas */}
@@ -330,7 +381,7 @@ export default function App() {
         {activeTab === 'home' && (
           <HomeView
             coreApps={coreApps}
-            packs={ECOSYSTEM_PACKS}
+            packs={packs}
             allApps={apps}
             userLicenses={userLicenses}
             localInstallations={localInstallations}
@@ -352,7 +403,7 @@ export default function App() {
         {activeTab === 'store' && (
           <AppsView
             apps={apps}
-            packs={ECOSYSTEM_PACKS}
+            packs={packs}
             userLicenses={userLicenses}
             localInstallations={localInstallations}
             installProgressMap={installProgressMap}
@@ -385,7 +436,7 @@ export default function App() {
 
         {activeTab === 'packs' && (
           <PacksView
-            packs={ECOSYSTEM_PACKS}
+            packs={packs}
             apps={apps}
             userLicenses={userLicenses}
             localInstallations={localInstallations}
@@ -416,16 +467,20 @@ export default function App() {
         {activeTab === 'admin' && (
           <AdminView
             apps={apps}
+            packs={packs}
             contactConfig={contactConfig}
             adminSession={adminSession}
             syncMeta={syncMeta}
+            notifications={notifications}
             onRefreshCatalog={() => handleCatalogSync(true)}
             onUpdateCatalog={(newApps) => setApps(newApps)}
+            onUpdatePacks={(newPacks) => setPacks(newPacks)}
             onUpdateContactConfig={(newCfg) => setContactConfig(newCfg)}
             onAdminAuthChange={(session) => {
               setAdminSession(session);
               handleCatalogSync(true);
             }}
+            onUpdateNotifications={(updated) => setNotifications(updated)}
           />
         )}
 
@@ -480,6 +535,27 @@ export default function App() {
         userLicense={selectedAppForLicense ? userLicenses[selectedAppForLicense.id] : undefined}
         contactConfig={contactConfig}
         onLicenseActivated={handleLicenseActivated}
+      />
+
+      {/* 6. Broadcast Notification Center Modal */}
+      <NotificationCenterModal
+        isOpen={isNotificationCenterOpen}
+        onClose={() => setIsNotificationCenterOpen(false)}
+        notifications={notifications.filter((n) => (adminSession.isAuthenticated ? true : n.published))}
+        readIds={readNotificationIds}
+        onMarkAsRead={(id) => {
+          const updated = markNotificationAsRead(id);
+          setReadNotificationIds(updated);
+        }}
+        onMarkAllAsRead={() => {
+          const allIds = notifications.map((n) => n.id);
+          const updated = markAllNotificationsAsRead(allIds);
+          setReadNotificationIds(updated);
+        }}
+        onNavigateTab={(tab) => {
+          setActiveTab(tab);
+          setIsNotificationCenterOpen(false);
+        }}
       />
     </div>
   );
