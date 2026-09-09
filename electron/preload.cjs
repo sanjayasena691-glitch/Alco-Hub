@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('alcoHub', {
   calculateFileHash: (filePath) => ipcRenderer.invoke('calculate-file-hash', filePath),
   checkGhCliStatus: () => ipcRenderer.invoke('check-gh-cli-status'),
   publishReleaseGhCli: (params) => ipcRenderer.invoke('publish-release-gh-cli', params),
+  verifyGhReleaseAsset: (params) => ipcRenderer.invoke('verify-gh-release-asset', params),
   onReleasePublishProgress: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, data) => callback(data);

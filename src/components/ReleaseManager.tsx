@@ -53,6 +53,8 @@ import {
   clearGitHubPublishConfig,
   generateGhCliCommand,
   syncCliReleaseToSupabase,
+  discoverAndVerifyGitHubReleaseAsset,
+  DiscoveredReleaseAsset,
   GitHubPublishConfig,
   DEFAULT_GITHUB_REPO_OWNER,
   DEFAULT_GITHUB_REPO_NAME,
@@ -131,6 +133,9 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
   // Manual CLI Mode states
   const [isSyncingManualMetadata, setIsSyncingManualMetadata] = useState(false);
   const [manualSyncResultMsg, setManualSyncResultMsg] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [discoveredAsset, setDiscoveredAsset] = useState<DiscoveredReleaseAsset | null>(null);
+  const [isVerifyingAsset, setIsVerifyingAsset] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -420,6 +425,32 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
     }
   };
 
+  // Handler: Manual Asset Verification against live GitHub API
+  const handleVerifyAssetOnGitHub = async () => {
+    if (!selectedApp) return;
+    const cleanVer = normalizeVersion(versionInput);
+    setIsVerifyingAsset(true);
+    setDiscoveryError(null);
+    setDiscoveredAsset(null);
+
+    const res = await discoverAndVerifyGitHubReleaseAsset({
+      appId: selectedApp.appId || selectedApp.id,
+      appName: selectedApp.name,
+      version: cleanVer,
+      tagHint: expectedTag,
+      fileNameHint: selectedFileName || undefined,
+      repoOwner: ghConfig.owner,
+      repoName: ghConfig.repo,
+    });
+
+    setIsVerifyingAsset(false);
+    if (res.success && res.data) {
+      setDiscoveredAsset(res.data);
+    } else {
+      setDiscoveryError(res.error || 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.');
+    }
+  };
+
   // Handler: Manual CLI Metadata Sync (Under Advanced Tools)
   const handleManualCliSync = async () => {
     if (!adminSession.isAuthenticated || adminSession.role !== 'owner') {
@@ -438,8 +469,13 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
       return;
     }
 
-    const finalFileName = selectedFileName || selectedFile?.name || `${canonicalAppId}-Setup.exe`;
     const finalSha256 = precomputedSha256 || '';
+    if (!finalSha256 || finalSha256.length !== 64) {
+      alert('SHA-256 Checksum (64 karakter) diperlukan untuk verifikasi integritas file. Pilih file installer terlebih dahulu agar SHA-256 dihitung.');
+      return;
+    }
+
+    const finalFileName = selectedFileName || selectedFile?.name || `${canonicalAppId}-Setup.exe`;
 
     setIsSyncingManualMetadata(true);
     setManualSyncResultMsg(null);
@@ -452,17 +488,22 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
       releaseNotes: releaseNotesInput,
       repoOwner: ghConfig.owner,
       repoName: ghConfig.repo,
+      explicitDownloadUrl: discoveredAsset?.browserDownloadUrl,
+      explicitTag: discoveredAsset?.tag,
     });
 
     setIsSyncingManualMetadata(false);
 
     if (res.success && res.updatedApp) {
+      if (res.discoveredData) {
+        setDiscoveredAsset(res.discoveredData);
+      }
       setManualSyncResultMsg({ type: 'success', message: res.message });
       const targetId = selectedApp.appId || selectedApp.id;
       const updatedList = apps.map((a) => ((a.appId && a.appId === targetId) || a.id === targetId ? res.updatedApp! : a));
       onCatalogUpdated(updatedList);
     } else {
-      setManualSyncResultMsg({ type: 'error', message: res.message });
+      setManualSyncResultMsg({ type: 'error', message: res.message || 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.' });
     }
   };
 
@@ -1514,15 +1555,72 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
             </div>
           </div>
 
-          {/* Step 2 in Manual Mode: Sync Metadata */}
+          {/* Step 2 in Manual Mode: Sync Metadata with Live Verification */}
           <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-indigo-400" />
-              <h4 className="text-xs font-bold text-white">Manual Supabase Metadata Sync</h4>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-400" />
+                <h4 className="text-xs font-bold text-white">Manual Supabase Metadata Sync & Asset Verification</h4>
+              </div>
+              <button
+                type="button"
+                onClick={handleVerifyAssetOnGitHub}
+                disabled={isVerifyingAsset || isSyncingManualMetadata}
+                className="px-3 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 text-[11px] font-semibold flex items-center gap-1.5 transition-colors"
+              >
+                {isVerifyingAsset ? (
+                  <>
+                    <RotateCw className="w-3 h-3 animate-spin" />
+                    <span>Memeriksa GitHub...</span>
+                  </>
+                ) : (
+                  <>
+                    <Github className="w-3 h-3" />
+                    <span>Cek Asset di GitHub</span>
+                  </>
+                )}
+              </button>
             </div>
             <p className="text-xs text-slate-400">
-              Setelah selesai menjalankan script CLI di terminal, klik tombol di bawah untuk menyinkronkan metadata ke Supabase.
+              Setelah rilis di GitHub dipublish, ALCO Hub akan membaca <code className="text-indigo-400 font-mono">browser_download_url</code> aktual dari GitHub Releases (Source of Truth) dan memvalidasi keberadaan asset sebelum menyinkronkan ke Supabase.
             </p>
+
+            {/* Discovered Asset Card */}
+            {discoveredAsset && (
+              <div className="p-3.5 rounded-xl bg-emerald-950/20 border border-emerald-500/30 text-xs space-y-2">
+                <div className="flex items-center justify-between text-emerald-400 font-bold">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    Asset Terverifikasi di GitHub Releases
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+                    {discoveredAsset.tag}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono text-slate-300 pt-1">
+                  <div>
+                    <span className="text-slate-500 block font-sans">File Asset:</span>
+                    <span className="text-white truncate block">{discoveredAsset.fileName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block font-sans">Ukuran:</span>
+                    <span>{Math.round((discoveredAsset.fileSize / 1024 / 1024) * 100) / 100} MB</span>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-slate-500 block font-sans">Direct Download URL:</span>
+                    <span className="text-indigo-300 text-[10px] break-all select-all block">{discoveredAsset.browserDownloadUrl}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Discovery Error */}
+            {discoveryError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{discoveryError}</span>
+              </div>
+            )}
 
             {manualSyncResultMsg && (
               <div
@@ -1550,12 +1648,12 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
               {isSyncingManualMetadata ? (
                 <>
                   <RotateCw className="w-4 h-4 animate-spin" />
-                  <span>Menyinkronkan ke Supabase...</span>
+                  <span>Memverifikasi & Menyinkronkan ke Supabase...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-4 h-4" />
-                  <span>Simpan Metadata Rilis v{normalizeVersion(versionInput || '0.1.0')} ke Supabase</span>
+                  <span>Verifikasi & Simpan Metadata ke Supabase</span>
                 </>
               )}
             </button>

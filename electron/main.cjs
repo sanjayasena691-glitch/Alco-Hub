@@ -1186,7 +1186,7 @@ ipcMain.handle('publish-release-gh-cli', async (event, params) => {
       return { success: false, step: 'uploading', error: errorMsg };
     }
 
-    // Step 5: Verifying Asset on GitHub
+    // Step 5: Verifying Asset on GitHub (Source of Truth)
     sendProgress('verifying', 90, 'Memverifikasi asset rilis di GitHub Releases CDN...', { sha256 });
 
     const finalViewRes = await execGhCommand([
@@ -1199,37 +1199,104 @@ ipcMain.handle('publish-release-gh-cli', async (event, params) => {
       'tagName,name,url,assets',
     ]);
 
+    let verifiedAsset = null;
+    let finalTagName = tagName;
     let finalHtmlUrl = `https://github.com/${repoSlug}/releases/tag/${encodeURIComponent(tagName)}`;
-    let officialDownloadUrl = `https://github.com/${repoSlug}/releases/download/${encodeURIComponent(tagName)}/${encodeURIComponent(fileName)}`;
+    let releaseName = releaseTitle;
 
     if (finalViewRes.code === 0 && finalViewRes.stdout) {
       try {
         const viewData = JSON.parse(finalViewRes.stdout);
+        if (viewData.tagName) finalTagName = viewData.tagName;
         if (viewData.url) finalHtmlUrl = viewData.url;
-        if (Array.isArray(viewData.assets)) {
-          const matchedAsset = viewData.assets.find(
-            (a) => a.name && a.name.toLowerCase() === fileName.toLowerCase()
-          );
-          if (matchedAsset && (matchedAsset.url || matchedAsset.browser_download_url)) {
-            // Note: `gh release view --json assets` returns `url` or `apiUrl`
-            if (matchedAsset.browser_download_url) {
-              officialDownloadUrl = matchedAsset.browser_download_url;
+        if (viewData.name) releaseName = viewData.name;
+        if (Array.isArray(viewData.assets) && viewData.assets.length > 0) {
+          verifiedAsset =
+            viewData.assets.find(
+              (a) => a.name && (a.name.toLowerCase() === fileName.toLowerCase() || a.name.toLowerCase() === path.basename(filePath).toLowerCase())
+            ) ||
+            viewData.assets.find((a) => a.name && a.name.toLowerCase().endsWith('.exe')) ||
+            viewData.assets[0];
+        }
+      } catch (parseErr) {
+        console.warn('[Release] Failed to parse gh release view JSON:', parseErr);
+      }
+    }
+
+    // Jika belum ditemukan melalui exact tagName, cari dari daftar seluruh release repo
+    if (!verifiedAsset) {
+      const listRes = await execGhCommand([
+        'release',
+        'list',
+        '--repo',
+        repoSlug,
+        '--json',
+        'tagName,name,isLatest,createdAt',
+      ]);
+      if (listRes.code === 0 && listRes.stdout) {
+        try {
+          const releases = JSON.parse(listRes.stdout);
+          const targetClean = cleanAppId.replace(/[^a-z0-9]/g, '');
+          const matchingRel = releases.find((r) => {
+            const rTag = (r.tagName || '').toLowerCase();
+            const rTitle = (r.name || '').toLowerCase();
+            return (
+              (rTag.includes(cleanVersion) || rTitle.includes(cleanVersion)) &&
+              (rTag.includes(cleanAppId) || rTag.replace(/[^a-z0-9]/g, '').includes(targetClean.slice(0, 6)))
+            );
+          });
+
+          if (matchingRel) {
+            const detailRes = await execGhCommand([
+              'release',
+              'view',
+              matchingRel.tagName,
+              '--repo',
+              repoSlug,
+              '--json',
+              'tagName,name,url,assets',
+            ]);
+            if (detailRes.code === 0 && detailRes.stdout) {
+              const detailData = JSON.parse(detailRes.stdout);
+              if (detailData.tagName) finalTagName = detailData.tagName;
+              if (detailData.url) finalHtmlUrl = detailData.url;
+              if (detailData.name) releaseName = detailData.name;
+              if (Array.isArray(detailData.assets) && detailData.assets.length > 0) {
+                verifiedAsset =
+                  detailData.assets.find(
+                    (a) => a.name && (a.name.toLowerCase() === fileName.toLowerCase() || a.name.toLowerCase().endsWith('.exe'))
+                  ) || detailData.assets[0];
+              }
             }
           }
-        }
-      } catch {}
+        } catch {}
+      }
+    }
+
+    // Jika asset tidak ditemukan sama sekali di GitHub: ABORT & BERI PESAN RESMI
+    if (!verifiedAsset) {
+      const errorMsg = 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.';
+      sendProgress('failed', 0, errorMsg, { error: errorMsg, sha256 });
+      return { success: false, step: 'verifying', error: errorMsg };
+    }
+
+    const actualAssetName = verifiedAsset.name || fileName;
+    // Pada GitHub CLI JSON output: asset.url adalah direct download link jika dimulai dengan github.com/.../releases/download/...
+    let actualDownloadUrl = verifiedAsset.browser_download_url || verifiedAsset.url;
+    if (!actualDownloadUrl || !actualDownloadUrl.includes('/releases/download/')) {
+      actualDownloadUrl = `https://github.com/${repoSlug}/releases/download/${encodeURIComponent(finalTagName)}/${encodeURIComponent(actualAssetName)}`;
     }
 
     const payload = {
       appId: cleanAppId,
       appName: appName || cleanAppId,
       version: cleanVersion,
-      tag: tagName,
-      releaseName: releaseTitle,
-      downloadUrl: officialDownloadUrl,
+      tag: finalTagName,
+      releaseName: releaseName,
+      downloadUrl: actualDownloadUrl,
       sha256,
-      fileName,
-      fileSize: fileStat.size,
+      fileName: actualAssetName,
+      fileSize: verifiedAsset.size || fileStat.size,
       htmlUrl: finalHtmlUrl,
       repoSlug,
       releaseNotes: cleanNotes,
@@ -1251,6 +1318,67 @@ ipcMain.handle('publish-release-gh-cli', async (event, params) => {
       success: false,
       step: 'failed',
       error: errorMsg,
+    };
+  }
+});
+
+// IPC: Verify any GitHub Release Asset on demand
+ipcMain.handle('verify-gh-release-asset', async (_event, params) => {
+  const {
+    tag,
+    repoOwner = 'yaladzan92-creator',
+    repoName = 'Alco-Releases',
+  } = params || {};
+
+  const repoSlug = `${repoOwner}/${repoName}`;
+  if (!tag) {
+    return { success: false, error: 'Tag release diperlukan.' };
+  }
+
+  const viewRes = await execGhCommand([
+    'release',
+    'view',
+    tag,
+    '--repo',
+    repoSlug,
+    '--json',
+    'tagName,name,url,assets',
+  ]);
+
+  if (viewRes.code !== 0 || !viewRes.stdout) {
+    return {
+      success: false,
+      error: 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.',
+    };
+  }
+
+  try {
+    const data = JSON.parse(viewRes.stdout);
+    if (!Array.isArray(data.assets) || data.assets.length === 0) {
+      return {
+        success: false,
+        error: 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.',
+      };
+    }
+
+    const exeAsset = data.assets.find((a) => a.name?.toLowerCase().endsWith('.exe')) || data.assets[0];
+    const downloadUrl = exeAsset.browser_download_url || exeAsset.url || `https://github.com/${repoSlug}/releases/download/${encodeURIComponent(data.tagName)}/${encodeURIComponent(exeAsset.name)}`;
+
+    return {
+      success: true,
+      data: {
+        tag: data.tagName,
+        releaseName: data.name,
+        fileName: exeAsset.name,
+        downloadUrl,
+        size: exeAsset.size,
+        htmlUrl: data.url,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: 'Gagal memproses data rilis dari GitHub.',
     };
   }
 });

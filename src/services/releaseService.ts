@@ -511,7 +511,223 @@ export function generateGhCliCommand({
 }
 
 /**
+ * Discovered GitHub Release Asset info from live GitHub API
+ */
+export interface DiscoveredReleaseAsset {
+  tag: string;
+  version: string;
+  fileName: string;
+  browserDownloadUrl: string;
+  fileSize: number;
+  releaseHtmlUrl: string;
+  releaseName: string;
+  publishedAt?: string;
+}
+
+/**
+ * Mengambil informasi release & binary asset aktual dari GitHub API secara aman (Source of Truth).
+ * Tidak lagi menebak release tag atau asset filename.
+ */
+export async function discoverAndVerifyGitHubReleaseAsset({
+  appId,
+  appName,
+  version,
+  tagHint,
+  fileNameHint,
+  repoOwner = DEFAULT_GITHUB_REPO_OWNER,
+  repoName = DEFAULT_GITHUB_REPO_NAME,
+  token,
+}: {
+  appId: string;
+  appName?: string;
+  version?: string;
+  tagHint?: string;
+  fileNameHint?: string;
+  repoOwner?: string;
+  repoName?: string;
+  token?: string;
+}): Promise<{
+  success: boolean;
+  data?: DiscoveredReleaseAsset;
+  error?: string;
+}> {
+  const cleanOwner = (repoOwner || DEFAULT_GITHUB_REPO_OWNER).trim();
+  const cleanRepo = (repoName || DEFAULT_GITHUB_REPO_NAME).trim();
+  const cleanAppId = (appId || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const cleanVersion = (version || '').trim().replace(/^v/i, '');
+
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+
+  const sessionToken = token || sessionStorage.getItem(STORAGE_KEY_GITHUB_TOKEN) || '';
+  if (sessionToken) {
+    headers.Authorization = `Bearer ${sessionToken.trim()}`;
+  }
+
+  try {
+    // 1. Jika ada tagHint spesifik, coba ambil langsung detail tag rilis tersebut
+    if (tagHint) {
+      try {
+        const directTagUrl = `https://api.github.com/repos/${cleanOwner}/${cleanRepo}/releases/tags/${encodeURIComponent(tagHint.trim())}`;
+        const directRes = await fetch(directTagUrl, { headers });
+        if (directRes.ok) {
+          const releaseJson = await directRes.json();
+          if (Array.isArray(releaseJson.assets) && releaseJson.assets.length > 0) {
+            // Temukan asset .exe yang cocok
+            const matchedAsset =
+              releaseJson.assets.find(
+                (a: any) => fileNameHint && a.name?.toLowerCase() === fileNameHint.toLowerCase()
+              ) ||
+              releaseJson.assets.find((a: any) => a.name?.toLowerCase().endsWith('.exe')) ||
+              releaseJson.assets[0];
+
+            if (matchedAsset && matchedAsset.browser_download_url) {
+              return {
+                success: true,
+                data: {
+                  tag: releaseJson.tag_name,
+                  version: cleanVersion || releaseJson.tag_name.replace(/.*v/i, ''),
+                  fileName: matchedAsset.name,
+                  browserDownloadUrl: matchedAsset.browser_download_url,
+                  fileSize: matchedAsset.size || 0,
+                  releaseHtmlUrl: releaseJson.html_url,
+                  releaseName: releaseJson.name || releaseJson.tag_name,
+                  publishedAt: releaseJson.published_at,
+                },
+              };
+            }
+          }
+        }
+      } catch (directErr) {
+        console.warn('[Release Discovery] Direct tag fetch error:', directErr);
+      }
+    }
+
+    // 2. Query daftar seluruh releases dari repo GitHub aktual
+    const releasesListUrl = `https://api.github.com/repos/${cleanOwner}/${cleanRepo}/releases?per_page=100`;
+    const listRes = await fetch(releasesListUrl, { headers });
+
+    if (!listRes.ok) {
+      if (listRes.status === 404) {
+        return {
+          success: false,
+          error: `Repository GitHub "${cleanOwner}/${cleanRepo}" tidak ditemukan atau berstatus privat.`,
+        };
+      }
+      return {
+        success: false,
+        error: `Gagal membaca releases dari GitHub (HTTP ${listRes.status}).`,
+      };
+    }
+
+    const releases = await listRes.json();
+    if (!Array.isArray(releases) || releases.length === 0) {
+      return {
+        success: false,
+        error: 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.',
+      };
+    }
+
+    // Helper keywords untuk pencocokan toleran (menghandle variasi nama atau typo seperti sytem / system)
+    const appKeywords = [
+      cleanAppId,
+      cleanAppId.replace(/^alco-/, ''),
+      appName?.toLowerCase() || '',
+    ]
+      .flatMap((s) => s.split(/[^a-z0-9]+/))
+      .filter((w) => w.length >= 3);
+
+    // Filter candidate release
+    let bestRelease: any = null;
+
+    // Prioritas 1: Tag name persis atau memuat cleanAppId + version
+    for (const rel of releases) {
+      const relTag = (rel.tag_name || '').toLowerCase();
+      const relTitle = (rel.name || '').toLowerCase();
+
+      // Cek apakah tagHint cocok
+      if (tagHint && relTag === tagHint.toLowerCase()) {
+        bestRelease = rel;
+        break;
+      }
+
+      // Cek apakah memuat version dan appId / app keywords
+      const hasVersion = cleanVersion ? relTag.includes(cleanVersion) || relTitle.includes(cleanVersion) : true;
+      const hasAppKeyword = appKeywords.some((kw) => relTag.includes(kw) || relTitle.includes(kw));
+
+      if (hasVersion && hasAppKeyword) {
+        bestRelease = rel;
+        break;
+      }
+    }
+
+    // Prioritas 2: Fallback ke rilis yang memuat version jika hanya ada satu
+    if (!bestRelease && cleanVersion) {
+      bestRelease = releases.find((rel: any) => (rel.tag_name || '').toLowerCase().includes(cleanVersion));
+    }
+
+    if (!bestRelease) {
+      return {
+        success: false,
+        error: 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.',
+      };
+    }
+
+    // 3. Cari asset installer (.exe) aktual di dalam release
+    if (!Array.isArray(bestRelease.assets) || bestRelease.assets.length === 0) {
+      return {
+        success: false,
+        error: 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.',
+      };
+    }
+
+    const matchedAsset =
+      bestRelease.assets.find(
+        (a: any) => fileNameHint && a.name?.toLowerCase() === fileNameHint.toLowerCase()
+      ) ||
+      bestRelease.assets.find((a: any) => a.name?.toLowerCase().endsWith('.exe')) ||
+      bestRelease.assets[0];
+
+    if (!matchedAsset || !matchedAsset.browser_download_url) {
+      return {
+        success: false,
+        error: 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.',
+      };
+    }
+
+    // Ekstrak versi dari tag jika memungkinkan (misal: "alco-creative-sytem-v1.0.2" -> "1.0.2")
+    const extractedVerMatch = (bestRelease.tag_name || '').match(/v?([0-9]+(\.[0-9]+)+)/i);
+    const extractedVer = extractedVerMatch ? extractedVerMatch[1] : cleanVersion || '1.0.0';
+
+    return {
+      success: true,
+      data: {
+        tag: bestRelease.tag_name,
+        version: extractedVer,
+        fileName: matchedAsset.name,
+        browserDownloadUrl: matchedAsset.browser_download_url,
+        fileSize: matchedAsset.size || 0,
+        releaseHtmlUrl: bestRelease.html_url,
+        releaseName: bestRelease.name || bestRelease.tag_name,
+        publishedAt: bestRelease.published_at,
+      },
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Koneksi ke GitHub Releases API gagal.',
+    };
+  }
+}
+
+/**
  * 1-Click Sync Metadata Supabase setelah rilis via GitHub CLI berhasil
+ * Menggunakan browser_download_url aktual dari GitHub sebagai Source of Truth.
  */
 export async function syncCliReleaseToSupabase({
   app,
@@ -519,36 +735,83 @@ export async function syncCliReleaseToSupabase({
   fileName,
   sha256,
   releaseNotes,
-  repoOwner,
-  repoName,
+  repoOwner = DEFAULT_GITHUB_REPO_OWNER,
+  repoName = DEFAULT_GITHUB_REPO_NAME,
+  explicitDownloadUrl,
+  explicitTag,
 }: {
   app: EcosystemApp;
   version: string;
-  fileName: string;
+  fileName?: string;
   sha256: string;
   releaseNotes?: string;
   repoOwner?: string;
   repoName?: string;
-}): Promise<{ success: boolean; message: string; updatedApp?: EcosystemApp }> {
-  const cleanAppId = (app.appId || app.id)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .replace(/-+/g, '-');
+  explicitDownloadUrl?: string;
+  explicitTag?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  updatedApp?: EcosystemApp;
+  discoveredData?: DiscoveredReleaseAsset;
+}> {
   const cleanVersion = version.replace(/^v/i, '').trim();
-  const tagName = `${cleanAppId}-v${cleanVersion}`;
-  const owner = repoOwner || DEFAULT_GITHUB_REPO_OWNER;
-  const repo = repoName || DEFAULT_GITHUB_REPO_NAME;
-  
-  // Format standar GitHub Releases direct asset download URL
-  const officialDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${encodeURIComponent(tagName)}/${encodeURIComponent(fileName)}`;
-  const cleanNotes = releaseNotes?.trim() || `Rilis resmi ${app.name} versi v${cleanVersion}.`;
+  const cleanSha256 = (sha256 || '').trim().toLowerCase();
+
+  if (!cleanSha256 || cleanSha256.length !== 64) {
+    return {
+      success: false,
+      message: 'SHA-256 Checksum tidak valid (harus 64 karakter hex). Hitung checksum file terlebih dahulu.',
+    };
+  }
+
+  let finalDownloadUrl = explicitDownloadUrl;
+  let finalTag = explicitTag;
+  let finalFileName = fileName;
+  let finalVersion = cleanVersion;
+  let discoveredInfo: DiscoveredReleaseAsset | undefined = undefined;
+
+  // Jika download URL belum terverifikasi dari data aktual, lakukan discovery dari GitHub Releases
+  if (!finalDownloadUrl) {
+    const discovery = await discoverAndVerifyGitHubReleaseAsset({
+      appId: app.appId || app.id,
+      appName: app.name,
+      version: cleanVersion,
+      tagHint: explicitTag,
+      fileNameHint: fileName,
+      repoOwner,
+      repoName,
+    });
+
+    if (!discovery.success || !discovery.data) {
+      return {
+        success: false,
+        message: discovery.error || 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.',
+      };
+    }
+
+    discoveredInfo = discovery.data;
+    finalDownloadUrl = discovery.data.browserDownloadUrl;
+    finalTag = discovery.data.tag;
+    finalFileName = discovery.data.fileName;
+    finalVersion = discovery.data.version || cleanVersion;
+  }
+
+  // Validasi ketat: pastikan final download URL valid HTTPS dan tidak kosong
+  if (!finalDownloadUrl || !finalDownloadUrl.startsWith('https://')) {
+    return {
+      success: false,
+      message: 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.',
+    };
+  }
+
+  const cleanNotes = releaseNotes?.trim() || `Rilis resmi ${app.name} versi v${finalVersion}.`;
 
   const updatedApp: EcosystemApp = {
     ...app,
-    latestVersion: cleanVersion,
-    downloadUrl: officialDownloadUrl,
-    sha256: sha256.trim().toLowerCase(),
+    latestVersion: finalVersion,
+    downloadUrl: finalDownloadUrl,
+    sha256: cleanSha256,
     releaseNotes: cleanNotes,
     updatedAt: new Date().toISOString(),
   };
@@ -558,8 +821,9 @@ export async function syncCliReleaseToSupabase({
   if (cloudSaveRes.success) {
     return {
       success: true,
-      message: `Metadata rilis v${cleanVersion} (${app.name}) berhasil disinkronkan ke Supabase!`,
+      message: `Metadata rilis v${finalVersion} (${app.name}) berhasil disinkronkan ke Supabase! (Tag: ${finalTag || 'verified'}, File: ${finalFileName || 'installer.exe'})`,
       updatedApp,
+      discoveredData: discoveredInfo,
     };
   } else {
     return {
@@ -702,6 +966,25 @@ export async function executeOneClickRelease({
     }
 
     const ghData = result.data;
+
+    // Validasi ketat: pastikan binary asset terverifikasi dan download URL valid HTTPS
+    if (!ghData.downloadUrl || !ghData.downloadUrl.startsWith('https://')) {
+      const errorMsg = 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.';
+      onProgress({
+        status: 'failed',
+        progressPercent: 0,
+        bytesUploaded: 0,
+        totalBytes: 0,
+        currentStepMessage: 'Verifikasi asset gagal.',
+        error: errorMsg,
+      });
+      return {
+        success: false,
+        stage: 'github_failed',
+        message: errorMsg,
+        error: errorMsg,
+      };
+    }
 
     // 2. Step Otomatis: Sync Metadata ke Supabase
     onProgress({
