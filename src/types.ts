@@ -302,6 +302,10 @@ export interface InstallResult {
   executablePath?: string | null;
   message?: string;
   error?: string;
+  resolvedDownloadUrl?: string;
+  releaseTag?: string;
+  assetFilename?: string;
+  shaMismatch?: boolean;
 }
 
 declare global {
@@ -317,6 +321,9 @@ declare global {
         sha256: string;
         latestVersion: string;
         appName?: string;
+        releaseTag?: string;
+        repoOwner?: string;
+        repoName?: string;
       }) => Promise<InstallResult>;
       onInstallProgress: (callback: (data: AppInstallProgress) => void) => () => void;
       checkContentEngineUpdate?: () => Promise<ContentEngineUpdateResult>;
@@ -324,6 +331,18 @@ declare global {
       calculateFileHash?: (filePath: string) => Promise<{ success: boolean; sha256?: string; error?: string }>;
       checkGhCliStatus?: () => Promise<GhCliStatus>;
       publishReleaseGhCli?: (params: OneClickPublishParams) => Promise<OneClickPublishResult>;
+      verifyGhReleaseAsset?: (params: { tag: string; repoOwner?: string; repoName?: string }) => Promise<{
+        success: boolean;
+        error?: string;
+        data?: {
+          tag: string;
+          releaseName?: string;
+          fileName?: string;
+          downloadUrl?: string;
+          size?: number;
+          htmlUrl?: string;
+        };
+      }>;
       onReleasePublishProgress?: (callback: (data: OneClickPublishProgressEvent) => void) => () => void;
     };
   }

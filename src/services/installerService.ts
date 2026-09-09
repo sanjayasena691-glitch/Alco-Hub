@@ -5,6 +5,7 @@
  */
 
 import { EcosystemApp, AppLocalInstallation, AppInstallProgress, InstallResult } from '../types';
+import { fetchFreshAppMetadata, updateCachedAppDownloadUrl } from './storeService';
 
 /**
  * Memeriksa apakah aplikasi terpasang di sistem desktop lokal.
@@ -54,9 +55,18 @@ export async function startAppInstallation(
   onProgress?: (progress: AppInstallProgress) => void
 ): Promise<InstallResult> {
   const appId = app.appId || app.id;
-  const downloadUrl = (app.downloadUrl || '').trim();
-  const sha256 = (app.sha256 || '').trim();
-  const latestVersion = app.latestVersion || app.version || '1.0.0';
+
+  // 1. Audit Cache: Ambil metadata cloud terbaru untuk aplikasi ini langsung dari Supabase
+  // (bypassing 5-minute cache throttle) agar tidak memakai data stale
+  let freshApp: EcosystemApp | null = null;
+  try {
+    freshApp = await fetchFreshAppMetadata(appId);
+  } catch {}
+
+  const activeApp = freshApp || app;
+  const downloadUrl = (activeApp.downloadUrl || app.downloadUrl || '').trim();
+  const sha256 = (activeApp.sha256 || app.sha256 || '').trim();
+  const latestVersion = activeApp.latestVersion || activeApp.version || app.latestVersion || app.version || '1.0.0';
 
   if (!downloadUrl) {
     const errorMsg = 'Download URL installer belum tersedia untuk aplikasi ini di rilis resmi.';
@@ -109,8 +119,25 @@ export async function startAppInstallation(
       downloadUrl,
       sha256,
       latestVersion,
-      appName: app.name,
+      appName: activeApp.name,
     });
+
+    // 2. Jika Electron berhasil meresolve actual download URL dari GitHub Releases:
+    // Perbarui local cache agar tidak mempertahankan URL lama
+    if (result.resolvedDownloadUrl && result.resolvedDownloadUrl !== downloadUrl) {
+      updateCachedAppDownloadUrl(appId, result.resolvedDownloadUrl, latestVersion, sha256);
+    }
+
+    if (!result.success && result.error && onProgress) {
+      onProgress({
+        appId,
+        status: 'failed',
+        progress: 0,
+        bytesReceived: 0,
+        totalBytes: 0,
+        error: result.error,
+      });
+    }
 
     return result;
   } catch (err: any) {

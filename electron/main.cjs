@@ -617,16 +617,261 @@ ipcMain.handle('check-all-apps-installed', async () => {
   return results;
 });
 
+/**
+ * Helper to fetch JSON from GitHub API (supports HTTPS redirects and official User-Agent).
+ */
+function fetchGitHubApiJson(apiUrl, token = '') {
+  return new Promise((resolve, reject) => {
+    if (!isValidSecureUrl(apiUrl)) {
+      return reject(new Error('GitHub API URL harus HTTPS.'));
+    }
+
+    const headers = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'ALCO-Hub-Desktop-Distribution/1.0',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const req = https.get(apiUrl, { headers, timeout: 8000 }, (res) => {
+      const statusCode = res.statusCode || 0;
+      const location = res.headers.location;
+
+      if ([301, 302, 307, 308].includes(statusCode) && location) {
+        res.resume();
+        const redirectUrl = new URL(location, apiUrl).toString();
+        return fetchGitHubApiJson(redirectUrl, token).then(resolve).catch(reject);
+      }
+
+      if (statusCode < 200 || statusCode >= 300) {
+        res.resume();
+        return reject(new Error(`GitHub API returned status ${statusCode}`));
+      }
+
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch {
+          reject(new Error('Format respons GitHub API tidak valid.'));
+        }
+      });
+    });
+
+    req.on('timeout', () => {
+      req.destroy(new Error('GitHub API request timed out'));
+    });
+    req.on('error', reject);
+  });
+}
+
+/**
+ * Resolves actual GitHub Release binary asset dynamically.
+ * Tolerant against typos in tags (e.g. "alco-creative-sytem-v1.0.2" vs "alco-creative-system-v1.0.2")
+ * or discrepancies in filenames ("ALCO.Creative.System.Setup.1.0.2.exe").
+ */
+async function resolveGitHubReleaseAsset({
+  appId,
+  latestVersion,
+  metadataDownloadUrl,
+  appName,
+  repoOwner = 'yaladzan92-creator',
+  repoName = 'Alco-Releases',
+}) {
+  const cleanAppId = (appId || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const cleanVersion = (latestVersion || '').trim().replace(/^v/i, '');
+
+  let targetOwner = repoOwner;
+  let targetRepo = repoName;
+  let tagHint = '';
+  let fileHint = '';
+
+  if (metadataDownloadUrl) {
+    try {
+      const parsed = new URL(metadataDownloadUrl);
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      // Format: /owner/repo/releases/download/tagName/fileName.exe
+      if (parts.length >= 6 && parts[2] === 'releases' && parts[3] === 'download') {
+        targetOwner = parts[0] || repoOwner;
+        targetRepo = parts[1] || repoName;
+        tagHint = decodeURIComponent(parts[4] || '');
+        fileHint = decodeURIComponent(parts[5] || '');
+      }
+    } catch {}
+  }
+
+  const appKeywords = [
+    cleanAppId,
+    cleanAppId.replace(/^alco-/, ''),
+    (appName || '').toLowerCase(),
+  ]
+    .flatMap((s) => s.split(/[^a-z0-9]+/))
+    .filter((w) => w.length >= 3);
+
+  // 1. Try direct specific tag URL if tagHint is present
+  if (tagHint) {
+    try {
+      const tagUrl = `https://api.github.com/repos/${targetOwner}/${targetRepo}/releases/tags/${encodeURIComponent(tagHint)}`;
+      const tagRel = await fetchGitHubApiJson(tagUrl);
+      if (tagRel && Array.isArray(tagRel.assets) && tagRel.assets.length > 0) {
+        const matched =
+          tagRel.assets.find((a) => fileHint && a.name?.toLowerCase() === fileHint.toLowerCase()) ||
+          tagRel.assets.find((a) => a.name?.toLowerCase().endsWith('.exe')) ||
+          tagRel.assets[0];
+
+        if (matched && (matched.browser_download_url || matched.url)) {
+          return {
+            found: true,
+            downloadUrl: matched.browser_download_url || matched.url,
+            releaseTag: tagRel.tag_name,
+            assetFilename: matched.name,
+            size: matched.size || 0,
+            version: cleanVersion || tagRel.tag_name.replace(/.*v/i, ''),
+          };
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Query all releases from GitHub Releases API
+  try {
+    const listUrl = `https://api.github.com/repos/${targetOwner}/${targetRepo}/releases?per_page=100`;
+    const releases = await fetchGitHubApiJson(listUrl);
+
+    if (Array.isArray(releases) && releases.length > 0) {
+      let matchedRelease = null;
+
+      // Priority 1: Match tag or name with both version and app keyword
+      for (const rel of releases) {
+        const rTag = (rel.tag_name || '').toLowerCase();
+        const rTitle = (rel.name || '').toLowerCase();
+
+        const hasVer = cleanVersion ? (rTag.includes(cleanVersion) || rTitle.includes(cleanVersion)) : true;
+        const hasApp = appKeywords.some((kw) => rTag.includes(kw) || rTitle.includes(kw));
+
+        if (hasVer && hasApp) {
+          matchedRelease = rel;
+          break;
+        }
+      }
+
+      // Priority 2: Match app keyword with latest version in tag
+      if (!matchedRelease) {
+        for (const rel of releases) {
+          const rTag = (rel.tag_name || '').toLowerCase();
+          const rTitle = (rel.name || '').toLowerCase();
+          const hasApp = appKeywords.some((kw) => rTag.includes(kw) || rTitle.includes(kw));
+          if (hasApp) {
+            matchedRelease = rel;
+            break;
+          }
+        }
+      }
+
+      // Priority 3: Fallback match on version alone
+      if (!matchedRelease && cleanVersion) {
+        matchedRelease = releases.find((rel) => (rel.tag_name || '').toLowerCase().includes(cleanVersion));
+      }
+
+      if (matchedRelease && Array.isArray(matchedRelease.assets) && matchedRelease.assets.length > 0) {
+        const matchedAsset =
+          matchedRelease.assets.find((a) => fileHint && a.name?.toLowerCase() === fileHint.toLowerCase()) ||
+          matchedRelease.assets.find((a) => a.name?.toLowerCase().endsWith('.exe')) ||
+          matchedRelease.assets[0];
+
+        if (matchedAsset && (matchedAsset.browser_download_url || matchedAsset.url)) {
+          const verMatch = (matchedRelease.tag_name || '').match(/v?([0-9]+(\.[0-9]+)+)/i);
+          const resolvedVer = verMatch ? verMatch[1] : cleanVersion || '1.0.0';
+
+          return {
+            found: true,
+            downloadUrl: matchedAsset.browser_download_url || matchedAsset.url,
+            releaseTag: matchedRelease.tag_name,
+            assetFilename: matchedAsset.name,
+            size: matchedAsset.size || 0,
+            version: resolvedVer,
+          };
+        }
+      }
+    }
+  } catch {}
+
+  // 3. Fallback using GitHub CLI if available in environment
+  try {
+    const listRes = await execGhCommand([
+      'release',
+      'list',
+      '--repo',
+      `${targetOwner}/${targetRepo}`,
+      '--json',
+      'tagName,name,isLatest',
+    ]);
+    if (listRes.code === 0 && listRes.stdout) {
+      const releases = JSON.parse(listRes.stdout);
+      const matchedRel =
+        releases.find((r) => {
+          const rTag = (r.tagName || '').toLowerCase();
+          const rTitle = (r.name || '').toLowerCase();
+          const hasVer = cleanVersion ? (rTag.includes(cleanVersion) || rTitle.includes(cleanVersion)) : true;
+          const hasApp = appKeywords.some((kw) => rTag.includes(kw) || rTitle.includes(kw));
+          return hasVer && hasApp;
+        }) || (cleanVersion ? releases.find((r) => (r.tagName || '').toLowerCase().includes(cleanVersion)) : null);
+
+      if (matchedRel) {
+        const viewRes = await execGhCommand([
+          'release',
+          'view',
+          matchedRel.tagName,
+          '--repo',
+          `${targetOwner}/${targetRepo}`,
+          '--json',
+          'tagName,name,url,assets',
+        ]);
+        if (viewRes.code === 0 && viewRes.stdout) {
+          const viewData = JSON.parse(viewRes.stdout);
+          if (Array.isArray(viewData.assets) && viewData.assets.length > 0) {
+            const exeAsset =
+              viewData.assets.find((a) => a.name?.toLowerCase().endsWith('.exe')) || viewData.assets[0];
+            let dlUrl = exeAsset.browser_download_url || exeAsset.url;
+            if (!dlUrl || !dlUrl.includes('/releases/download/')) {
+              dlUrl = `https://github.com/${targetOwner}/${targetRepo}/releases/download/${encodeURIComponent(viewData.tagName)}/${encodeURIComponent(exeAsset.name)}`;
+            }
+
+            return {
+              found: true,
+              downloadUrl: dlUrl,
+              releaseTag: viewData.tagName,
+              assetFilename: exeAsset.name,
+              size: exeAsset.size || 0,
+              version: cleanVersion || viewData.tagName.replace(/.*v/i, ''),
+            };
+          }
+        }
+      }
+    }
+  } catch {}
+
+  return {
+    found: false,
+    error: 'Installer resmi tidak ditemukan di GitHub Releases.',
+  };
+}
+
 // 3. Generic installer download, SHA-256 integrity verification, and execution
 ipcMain.handle('download-and-install-app', async (event, params) => {
-  const { appId, downloadUrl, sha256, latestVersion, appName } = params || {};
+  const { appId, downloadUrl, sha256, latestVersion, appName, releaseTag, repoOwner, repoName } = params || {};
 
   if (!appId) {
     return { success: false, error: 'App ID tidak ditemukan.' };
-  }
-
-  if (!downloadUrl || !isValidSecureUrl(downloadUrl)) {
-    return { success: false, error: 'Download URL tidak valid atau tidak menggunakan protokol HTTPS resmi.' };
   }
 
   const cleanExpectedHash = (sha256 || '').trim().toLowerCase();
@@ -653,6 +898,48 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
     }
   };
 
+  // Phase 0: GitHub Asset Source-of-Truth Resolution & Diagnostics
+  sendProgress('downloading', 0, 0, 0, 'Memverifikasi rilis aktual di GitHub Releases...');
+
+  let actualDownloadUrl = downloadUrl;
+  let actualReleaseTag = releaseTag || '';
+  let actualAssetFilename = '';
+
+  try {
+    const resolution = await resolveGitHubReleaseAsset({
+      appId,
+      latestVersion,
+      metadataDownloadUrl: downloadUrl,
+      appName,
+      repoOwner: repoOwner || 'yaladzan92-creator',
+      repoName: repoName || 'Alco-Releases',
+    });
+
+    if (resolution.found && resolution.downloadUrl) {
+      actualDownloadUrl = resolution.downloadUrl;
+      actualReleaseTag = resolution.releaseTag;
+      actualAssetFilename = resolution.assetFilename;
+    }
+  } catch (resErr) {
+    console.warn('[Electron] Dynamic release asset resolution warning:', resErr);
+  }
+
+  // Diagnostic Log (appId, latestVersion, metadataDownloadUrl, resolvedDownloadUrl, releaseTag, assetFilename)
+  console.log('[Electron Download Diagnostic]', {
+    appId,
+    latestVersion: latestVersion || 'unknown',
+    metadataDownloadUrl: downloadUrl || 'none',
+    resolvedDownloadUrl: actualDownloadUrl || 'none',
+    releaseTag: actualReleaseTag || 'none',
+    assetFilename: actualAssetFilename || 'none',
+  });
+
+  if (!actualDownloadUrl || !isValidSecureUrl(actualDownloadUrl)) {
+    const errorMsg = 'Installer resmi tidak ditemukan di GitHub Releases.';
+    sendProgress('failed', 0, 0, 0, '', errorMsg);
+    return { success: false, error: errorMsg };
+  }
+
   // Setup temporary directory in user temp space
   const tempDir = path.join(app.getPath('temp'), 'alco-hub-downloads');
   try {
@@ -663,15 +950,60 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
 
   const sanitizedAppId = appId.replace(/[^a-zA-Z0-9_-]/g, '_');
   const tempDownloadPath = path.join(tempDir, `${sanitizedAppId}-${Date.now()}.download.tmp`);
-  const finalInstallerPath = path.join(tempDir, `${sanitizedAppId}-${latestVersion || 'setup'}.exe`);
+  const finalInstallerPath = path.join(
+    tempDir,
+    actualAssetFilename || `${sanitizedAppId}-${latestVersion || 'setup'}.exe`
+  );
 
   try {
     // Phase 1: Download binary stream with progress
-    sendProgress('downloading', 0, 0, 0, 'Memulai download installer dari GitHub Releases...');
+    sendProgress('downloading', 0, 0, 0, 'Memulai download installer resmi dari GitHub Releases...');
 
-    await downloadFileWithProgress(downloadUrl, tempDownloadPath, ({ bytesReceived, totalBytes, progress }) => {
-      sendProgress('downloading', progress, bytesReceived, totalBytes, `Mengunduh installer (${progress}%)...`);
-    });
+    try {
+      await downloadFileWithProgress(actualDownloadUrl, tempDownloadPath, ({ bytesReceived, totalBytes, progress }) => {
+        sendProgress('downloading', progress, bytesReceived, totalBytes, `Mengunduh installer (${progress}%)...`);
+      });
+    } catch (downloadErr) {
+      // Jika URL pertama 404 dan belum di-resolve dari GitHub API, coba fallback resolution
+      if (
+        downloadErr &&
+        (downloadErr.message?.includes('404') || downloadErr.message?.includes('Status 404')) &&
+        actualDownloadUrl === downloadUrl
+      ) {
+        sendProgress('downloading', 0, 0, 0, 'Mencari asset rilis alternatif di GitHub...');
+        const fallbackRes = await resolveGitHubReleaseAsset({
+          appId,
+          latestVersion,
+          metadataDownloadUrl: downloadUrl,
+          appName,
+          repoOwner: repoOwner || 'yaladzan92-creator',
+          repoName: repoName || 'Alco-Releases',
+        });
+
+        if (fallbackRes.found && fallbackRes.downloadUrl && fallbackRes.downloadUrl !== actualDownloadUrl) {
+          actualDownloadUrl = fallbackRes.downloadUrl;
+          actualReleaseTag = fallbackRes.releaseTag;
+          actualAssetFilename = fallbackRes.assetFilename;
+
+          console.log('[Electron Download Fallback Retry]', {
+            appId,
+            resolvedDownloadUrl: actualDownloadUrl,
+            releaseTag: actualReleaseTag,
+          });
+
+          await downloadFileWithProgress(actualDownloadUrl, tempDownloadPath, ({ bytesReceived, totalBytes, progress }) => {
+            sendProgress('downloading', progress, bytesReceived, totalBytes, `Mengunduh installer (${progress}%)...`);
+          });
+        } else {
+          throw new Error('Installer resmi tidak ditemukan di GitHub Releases.');
+        }
+      } else {
+        if (downloadErr.message?.includes('404')) {
+          throw new Error('Installer resmi tidak ditemukan di GitHub Releases.');
+        }
+        throw downloadErr;
+      }
+    }
 
     // Phase 2: SHA-256 Integrity Verification
     sendProgress('verifying', 100, 0, 0, 'Memverifikasi checksum SHA-256 binary installer...');
@@ -686,16 +1018,22 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
 
       const errorMsg = 'Installer verification failed. Checksum SHA-256 tidak cocok dengan metadata rilis resmi.';
       sendProgress('failed', 0, 0, 0, '', errorMsg);
-      return { success: false, error: errorMsg };
+      return {
+        success: false,
+        error: errorMsg,
+        shaMismatch: true,
+      };
     }
 
     // Phase 3: Finalize installer file path
     try {
       if (fs.existsSync(finalInstallerPath)) fs.unlinkSync(finalInstallerPath);
       fs.renameSync(tempDownloadPath, finalInstallerPath);
-    } catch (err) {
+    } catch {
       fs.copyFileSync(tempDownloadPath, finalInstallerPath);
-      try { fs.unlinkSync(tempDownloadPath); } catch {}
+      try {
+        fs.unlinkSync(tempDownloadPath);
+      } catch {}
     }
 
     // Phase 4: Execute installer via detached process
@@ -723,15 +1061,22 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
     return {
       success: true,
       message: 'Installer berhasil diunduh, diverifikasi, dan dijalankan.',
+      resolvedDownloadUrl: actualDownloadUrl,
+      releaseTag: actualReleaseTag,
+      assetFilename: actualAssetFilename,
     };
   } catch (err) {
     try {
       if (fs.existsSync(tempDownloadPath)) fs.unlinkSync(tempDownloadPath);
     } catch {}
 
-    const errorMsg = err instanceof Error ? err.message : 'Terjadi kesalahan saat proses download & install.';
-    sendProgress('failed', 0, 0, 0, '', errorMsg);
-    return { success: false, error: errorMsg };
+    const rawMessage = err instanceof Error ? err.message : 'Terjadi kesalahan saat proses download & install.';
+    const finalErrorMessage = rawMessage.includes('404')
+      ? 'Installer resmi tidak ditemukan di GitHub Releases.'
+      : rawMessage;
+
+    sendProgress('failed', 0, 0, 0, '', finalErrorMessage);
+    return { success: false, error: finalErrorMessage };
   }
 });
 

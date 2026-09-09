@@ -525,6 +525,88 @@ export async function syncCatalogWithSupabase(
   }
 }
 
+/**
+ * Mengambil metadata terbaru untuk satu aplikasi langsung dari Supabase
+ * (Bypassing 5-minute cache throttle) saat user mengklik Install / Update.
+ */
+export async function fetchFreshAppMetadata(appId: string): Promise<EcosystemApp | null> {
+  const canonicalId = (appId || '').toLowerCase().trim();
+  const client = getSupabase();
+  if (!client || !isSupabaseConfigured()) {
+    const cached = getCachedApps().find((a) => (a.appId || a.id).toLowerCase() === canonicalId);
+    return cached || null;
+  }
+
+  try {
+    const { data: dbApp, error } = await client
+      .from('apps')
+      .select('*')
+      .or(`app_id.eq.${canonicalId},id.eq.${canonicalId}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.warn(`[ALCO Hub] Failed to fetch fresh metadata for ${canonicalId}:`, error.message);
+      const cached = getCachedApps().find((a) => (a.appId || a.id).toLowerCase() === canonicalId);
+      return cached || null;
+    }
+
+    if (dbApp) {
+      const mapped = mapDbRowToApp(dbApp);
+      // Perbarui item spesifik ini di local cache
+      const cached = getCachedApps();
+      const updatedList = cached.map((a) => {
+        if ((a.appId || a.id).toLowerCase() === canonicalId) {
+          return mapped;
+        }
+        return a;
+      });
+      if (!updatedList.some((a) => (a.appId || a.id).toLowerCase() === canonicalId)) {
+        updatedList.push(mapped);
+      }
+      saveCatalogToCache(updatedList);
+      return mapped;
+    }
+  } catch (err) {
+    console.warn(`[ALCO Hub] Error fetching fresh metadata for ${canonicalId}:`, err);
+  }
+
+  const cached = getCachedApps().find((a) => (a.appId || a.id).toLowerCase() === canonicalId);
+  return cached || null;
+}
+
+/**
+ * Memperbarui download_url dan metadata yang telah diverifikasi di cache lokal
+ * agar permintaan berikutnya tidak lagi menggunakan URL lama.
+ */
+export function updateCachedAppDownloadUrl(
+  appId: string,
+  verifiedDownloadUrl: string,
+  latestVersion?: string,
+  sha256?: string
+): void {
+  const canonicalId = (appId || '').toLowerCase().trim();
+  const cached = getCachedApps();
+  let modified = false;
+
+  const updatedList = cached.map((app) => {
+    if ((app.appId || app.id).toLowerCase() === canonicalId) {
+      modified = true;
+      return {
+        ...app,
+        downloadUrl: verifiedDownloadUrl,
+        ...(latestVersion ? { latestVersion, version: latestVersion } : {}),
+        ...(sha256 ? { sha256 } : {}),
+      };
+    }
+    return app;
+  });
+
+  if (modified) {
+    saveCatalogToCache(updatedList);
+  }
+}
+
 // ==============================================================================
 // 4. OWNER / ADMIN ACTIONS (CLOUD MUTATIONS DIRECTLY TO SUPABASE)
 // ==============================================================================
