@@ -34,6 +34,7 @@ import {
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
+import { AppIcon } from './AppIcon';
 
 interface ApplicationCardProps {
   app: EcosystemApp;
@@ -238,18 +239,12 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
             id={`app-icon-${app.id}`}
             className={`w-11 h-11 rounded-lg border flex items-center justify-center shrink-0 overflow-hidden ${accent.iconBg} ${accent.iconBorder} ${accent.iconText}`}
           >
-            {app.iconUrl && !imageError ? (
-              <img
-                src={app.iconUrl}
-                alt={app.name}
-                loading="lazy"
-                referrerPolicy="no-referrer"
-                onError={() => setImageError(true)}
-                className="w-full h-full object-contain p-1.5"
-              />
-            ) : (
-              renderIcon(app.iconName)
-            )}
+            <AppIcon
+              iconUrl={app.iconUrl}
+              iconName={app.iconName}
+              name={app.name}
+              iconClassName="w-5 h-5"
+            />
           </div>
 
           {/* Status Badge */}

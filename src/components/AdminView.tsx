@@ -326,18 +326,18 @@ export const AdminView: React.FC<AdminViewProps> = ({
     return (
       <div id="admin-login-guard" className="max-w-md mx-auto py-12 space-y-6">
         <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-inner">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto shadow-sm">
             <Lock className="w-6 h-6" />
           </div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight">Owner Portal</h1>
-          <p className="text-xs text-slate-400 leading-relaxed">
-            Pusat kendali katalog terpusat Aladzan Corpora. Masuk menggunakan akun Supabase Auth resmi yang terdaftar di <code className="text-amber-300 font-mono">public.admin_users</code>.
+          <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">Owner Portal</h1>
+          <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+            Pusat kendali katalog terpusat Aladzan Corpora. Masuk menggunakan akun Supabase Auth resmi yang terdaftar di <code className="text-amber-700 dark:text-amber-300 font-mono">public.admin_users</code>.
           </p>
         </div>
 
-        <form onSubmit={handleLogin} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
+        <form onSubmit={handleLogin} className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm dark:shadow-xl transition-colors">
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300">Email</label>
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Email</label>
             <input
               id="owner-email-input"
               type="email"
@@ -347,14 +347,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 if (loginError) setLoginError('');
               }}
               placeholder="owner@aladzancorpora.com"
-              className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:border-amber-500 outline-hidden transition-colors"
+              className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white focus:border-amber-500 outline-hidden transition-colors"
               required
               disabled={isSubmitting}
             />
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300">Password</label>
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Password</label>
             <input
               id="owner-password-input"
               type="password"
@@ -364,7 +364,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 if (loginError) setLoginError('');
               }}
               placeholder="••••••••"
-              className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white focus:border-amber-500 outline-hidden transition-colors"
+              className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white focus:border-amber-500 outline-hidden transition-colors"
               required
               disabled={isSubmitting}
             />
@@ -372,41 +372,41 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
           {/* Status Indicator: Signing in... */}
           {authStatus === 'signing-in' && (
-            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5 animate-pulse">
-              <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-amber-400" />
+            <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2.5 animate-pulse">
+              <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-amber-600 dark:text-amber-400" />
               <div>
                 <p className="font-semibold">Signing in...</p>
-                <p className="text-[11px] text-amber-300/80">Memvalidasi akun Supabase Auth dan tabel admin_users...</p>
+                <p className="text-[11px] text-amber-700 dark:text-amber-300/80">Memvalidasi akun Supabase Auth dan tabel admin_users...</p>
               </div>
             </div>
           )}
 
           {/* Status Indicator: Invalid Credentials */}
           {authStatus === 'invalid-credentials' && loginError && (
-            <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5">
-              <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400" />
+            <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2.5">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
               <div>
                 <p className="font-bold">Invalid credentials</p>
-                <p className="text-[11px] text-rose-300/80">Email atau password yang Anda masukkan tidak sesuai.</p>
+                <p className="text-[11px] text-rose-600 dark:text-rose-300/80">Email atau password yang Anda masukkan tidak sesuai.</p>
               </div>
             </div>
           )}
 
           {/* Status Indicator: Access Denied */}
           {authStatus === 'access-denied' && loginError && (
-            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2.5">
-              <ShieldX className="w-4 h-4 shrink-0 text-amber-400" />
+            <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2.5">
+              <ShieldX className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
               <div>
                 <p className="font-bold">Access denied</p>
-                <p className="text-[11px] text-amber-300/80">Akun terdaftar di Supabase Auth, tetapi tidak memiliki role Owner di tabel public.admin_users.</p>
+                <p className="text-[11px] text-amber-700 dark:text-amber-300/80">Akun terdaftar di Supabase Auth, tetapi tidak memiliki role Owner di tabel public.admin_users.</p>
               </div>
             </div>
           )}
 
           {/* Generic Error */}
           {loginError && authStatus !== 'invalid-credentials' && authStatus !== 'access-denied' && (
-            <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5">
-              <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400" />
+            <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2.5">
+              <ShieldAlert className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
               <div className="text-[11px] leading-relaxed">{loginError}</div>
             </div>
           )}
@@ -428,10 +428,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
           </button>
         </form>
 
-        <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800/80 text-center text-[11px] text-slate-400">
+        <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800/80 text-center text-[11px] text-slate-600 dark:text-slate-400">
           <p>
             User publik hanya dapat melihat aplikasi yang berstatus{' '}
-            <span className="text-emerald-400 font-semibold">Published</span>. Akses Owner terlindungi oleh Row Level Security (RLS).
+            <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Published</span>. Akses Owner terlindungi oleh Row Level Security (RLS).
           </p>
         </div>
       </div>
@@ -444,20 +444,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
   return (
     <div id="alco-admin-view" className="space-y-8 max-w-6xl">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-6">
         <div>
           <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20 uppercase">
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20 uppercase">
               Owner Control Center
             </span>
-            <span className="text-xs text-slate-400 font-mono">
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
               ({adminSession.email || 'Owner Authenticated'})
             </span>
           </div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight mt-1">
+          <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-1">
             Centralized App Store & Distribution Center
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
             Daftarkan aplikasi, kelola Product Packs dinamis, rilis binary GitHub secara otomatis, dan konfigurasi lisensi.
           </p>
         </div>
@@ -466,7 +466,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           <button
             type="button"
             onClick={onRefreshCatalog}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold transition-colors"
             title="Sinkronisasi Ulang Supabase"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${syncMeta.status === 'syncing' ? 'animate-spin' : ''}`} />
@@ -483,7 +483,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           <button
             type="button"
             onClick={handleLogout}
-            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 transition-colors"
+            className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
             title="Keluar dari Owner Portal"
           >
             <LogOut className="w-4 h-4" />
@@ -492,19 +492,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
       </div>
 
       {notification && (
-        <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+        <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
           <span>{notification}</span>
         </div>
       )}
 
       {/* Admin Navigation Sub-Tabs */}
-      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-slate-800 pb-3">
+      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-slate-200 dark:border-slate-800 pb-3">
         <button
           type="button"
           onClick={() => { setActiveTab('apps'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'apps' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+            activeTab === 'apps' ? 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           Katalog & Drafts ({apps.length})
@@ -513,37 +513,37 @@ export const AdminView: React.FC<AdminViewProps> = ({
           type="button"
           onClick={() => { setActiveTab('packs'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-            activeTab === 'packs' ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40 shadow-xs' : 'text-slate-400 hover:text-white'
+            activeTab === 'packs' ? 'bg-purple-100 dark:bg-purple-600/30 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-500/40 shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
-          <Layers className="w-3.5 h-3.5 text-purple-400" />
+          <Layers className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
           <span>Product Packs ({packs.length})</span>
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('notifications'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-            activeTab === 'notifications' ? 'bg-amber-600/30 text-amber-300 border border-amber-500/40 shadow-xs' : 'text-slate-400 hover:text-white'
+            activeTab === 'notifications' ? 'bg-amber-100 dark:bg-amber-600/30 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40 shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
-          <Bell className="w-3.5 h-3.5 text-amber-400" />
+          <Bell className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
           <span>Broadcast Notifications ({notifications.length})</span>
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('releases'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-            activeTab === 'releases' ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 shadow-xs' : 'text-slate-400 hover:text-white'
+            activeTab === 'releases' ? 'bg-indigo-100 dark:bg-indigo-600/30 text-indigo-700 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-500/40 shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
-          <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
+          <UploadCloud className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
           <span>Release Manager</span>
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('updates'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'updates' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+            activeTab === 'updates' ? 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           Manual Metadata Updater
@@ -552,7 +552,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           type="button"
           onClick={() => { setActiveTab('contact'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'contact' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+            activeTab === 'contact' ? 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           Kontak Resmi ALCO
@@ -561,7 +561,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
           type="button"
           onClick={() => { setActiveTab('supabase'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'supabase' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
+            activeTab === 'supabase' ? 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
           }`}
         >
           Supabase & SQL
@@ -617,11 +617,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
             />
           ) : (
             /* App Table */
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/90 overflow-hidden">
-              <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 overflow-hidden shadow-sm dark:shadow-xl">
+              <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-white">Daftar Aplikasi Katalog Terpusat ({apps.length})</h3>
-                  <span className="text-xs text-slate-400">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">Daftar Aplikasi Katalog Terpusat ({apps.length})</h3>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
                     • {apps.filter((a) => a.published).length} Published, {apps.filter((a) => !a.published).length} Draft
                   </span>
                 </div>
@@ -634,28 +634,28 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       showNotification('Katalog direset ke default.');
                     }
                   }}
-                  className="text-xs text-slate-400 hover:text-slate-200"
+                  className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
                 >
                   Reset Default
                 </button>
               </div>
 
-              <div className="divide-y divide-slate-800">
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
                 {apps.map((app) => (
                   <div key={app.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
                     <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-white text-sm truncate">{app.name}</span>
-                        <span className="font-mono text-[11px] text-slate-400">({app.appId || app.id})</span>
+                        <span className="font-bold text-slate-900 dark:text-white text-sm truncate">{app.name}</span>
+                        <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">({app.appId || app.id})</span>
                         
                         {/* Publish status */}
                         {app.published ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 inline-flex items-center gap-1">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/20 inline-flex items-center gap-1">
                             <Eye className="w-3 h-3" />
                             <span>PUBLISHED</span>
                           </span>
                         ) : (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20 inline-flex items-center gap-1">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20 inline-flex items-center gap-1">
                             <EyeOff className="w-3 h-3" />
                             <span>DRAFT</span>
                           </span>
@@ -663,20 +663,20 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                           app.pricingType === 'free'
-                            ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                            ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/20'
                             : app.pricingType === 'trial'
-                              ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                              ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20'
                               : app.pricingType === 'licensed'
-                                ? 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/20'
-                                : 'bg-slate-800 text-slate-400'
+                                ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/20'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                         }`}>
                           {app.pricingType.toUpperCase()}
                           {app.pricingType === 'trial' && app.trialDurationDays ? ` (${app.trialDurationDays}D)` : ''}
                         </span>
                       </div>
-                      <p className="text-slate-400 text-[11px] truncate">{app.functionLabel}</p>
-                      <p className="text-slate-500 text-[11px]">
-                        Versi: v{app.latestVersion} • Harga: {app.priceLabel || 'Free'} • Pack: <span className="text-slate-400 font-semibold">{app.packId}</span>
+                      <p className="text-slate-600 dark:text-slate-400 text-[11px] truncate">{app.functionLabel}</p>
+                      <p className="text-slate-500 dark:text-slate-500 text-[11px]">
+                        Versi: v{app.latestVersion} • Harga: {app.priceLabel || 'Free'} • Pack: <span className="text-slate-700 dark:text-slate-400 font-semibold">{app.packId}</span>
                       </p>
                     </div>
 
@@ -686,7 +686,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         onClick={() => handleTogglePublish(app)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
                           app.published
-                            ? 'bg-slate-800 hover:bg-slate-700 text-amber-300'
+                            ? 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-amber-700 dark:text-amber-300'
                             : 'bg-emerald-600 hover:bg-emerald-500 text-white'
                         }`}
                         title={app.published ? 'Sembunyikan dari user (Jadikan Draft)' : 'Terbitkan ke Store user'}
@@ -698,15 +698,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleOpenEditForm(app)}
-                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold inline-flex items-center gap-1.5"
+                        className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold inline-flex items-center gap-1.5"
                       >
-                        <Edit className="w-3.5 h-3.5 text-slate-400" />
+                        <Edit className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                         <span>Edit</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => handleDeleteApp(app.id)}
-                        className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 transition-colors"
+                        className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 transition-colors"
                         title="Hapus Aplikasi"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -722,21 +722,21 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
       {/* TAB: MANUAL UPDATE PUBLISHER */}
       {activeTab === 'updates' && (
-        <form onSubmit={handlePublishUpdate} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
+        <form onSubmit={handlePublishUpdate} className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-5 shadow-sm dark:shadow-xl transition-colors">
           <div className="space-y-1">
-            <h3 className="text-base font-bold text-white">Terbitkan Versi Baru & GitHub Releases</h3>
-            <p className="text-xs text-slate-400">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Terbitkan Versi Baru & GitHub Releases</h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400">
               Ubah versi terbaru aplikasi secara manual. User yang menggunakan aplikasi dengan versi lebih lama akan otomatis menerima status "Update Available" beserta link installer GitHub.
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Pilih Aplikasi Target</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Pilih Aplikasi Target</label>
               <select
                 value={selectedAppForUpdate}
                 onChange={(e) => setSelectedAppForUpdate(e.target.value)}
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
+                className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
               >
                 {apps.map((a) => (
                   <option key={a.id} value={a.appId || a.id}>
@@ -747,48 +747,48 @@ export const AdminView: React.FC<AdminViewProps> = ({
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Nomor Versi Baru</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Nomor Versi Baru</label>
               <input
                 type="text"
                 value={newVersionInput}
                 onChange={(e) => setNewVersionInput(e.target.value)}
                 placeholder="contoh: 1.1.0"
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white font-mono focus:outline-none focus:border-amber-500"
                 required
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">URL Unduhan GitHub Releases (.exe / .zip)</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">URL Unduhan GitHub Releases (.exe / .zip)</label>
               <input
                 type="url"
                 value={updateDownloadUrl}
                 onChange={(e) => setUpdateDownloadUrl(e.target.value)}
                 placeholder="https://github.com/Alco-Releases/alco-app/releases/download/v1.1.0/installer.exe"
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white font-mono focus:outline-none focus:border-amber-500"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">SHA-256 Checksum Hash</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">SHA-256 Checksum Hash</label>
               <input
                 type="text"
                 value={updateSha256}
                 onChange={(e) => setUpdateSha256(e.target.value)}
                 placeholder="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white font-mono focus:outline-none focus:border-amber-500"
               />
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-300">Catatan Rilis (Release Notes)</label>
+            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Catatan Rilis (Release Notes)</label>
             <textarea
               value={updateReleaseNotes}
               onChange={(e) => setUpdateReleaseNotes(e.target.value)}
               rows={3}
               placeholder="Jelaskan fitur baru, perbaikan bug, dan optimasi pada update ini..."
-              className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white leading-relaxed"
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:border-amber-500"
             />
           </div>
 
@@ -796,7 +796,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold tracking-tight shadow-md disabled:opacity-50"
+              className="px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold tracking-tight shadow-md disabled:opacity-50 transition-all"
             >
               {isSubmitting ? 'Memproses...' : 'Publish Update ke Supabase Cloud'}
             </button>
@@ -806,57 +806,57 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
       {/* TAB: CONTACT CONFIG */}
       {activeTab === 'contact' && (
-        <form onSubmit={handleSaveContact} className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
+        <form onSubmit={handleSaveContact} className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-5 shadow-sm dark:shadow-xl transition-colors">
           <div className="space-y-1">
-            <h3 className="text-base font-bold text-white">Konfigurasi Kontak Resmi ALCO</h3>
-            <p className="text-xs text-slate-400">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Konfigurasi Kontak Resmi ALCO</h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400">
               Nomor WhatsApp dan email ini akan digunakan pada tombol "Minta / Beli Lisensi" di seluruh aplikasi.
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Nomor WhatsApp Resmi ALCO</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Nomor WhatsApp Resmi ALCO</label>
               <input
                 type="text"
                 value={waNumber}
                 onChange={(e) => setWaNumber(e.target.value)}
                 placeholder="6281234567890 (Gunakan kode negara 62)"
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+                className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white font-mono focus:outline-none focus:border-emerald-500"
                 required
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Email Support</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Email Support</label>
               <input
                 type="email"
                 value={supportEmail}
                 onChange={(e) => setSupportEmail(e.target.value)}
                 placeholder="contact@aladzancorpora.com"
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
+                className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
               />
             </div>
 
             <div className="space-y-1 sm:col-span-2">
-              <label className="text-xs font-semibold text-slate-300">Nama Perusahaan / Brand</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Nama Perusahaan / Brand</label>
               <input
                 type="text"
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
                 placeholder="Aladzan Corpora"
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
+                className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
               />
             </div>
 
             <div className="space-y-1 sm:col-span-2">
-              <label className="text-xs font-semibold text-slate-300">Pesan Default Pembelian Lisensi</label>
+              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Pesan Default Pembelian Lisensi</label>
               <textarea
                 value={defaultMsg}
                 onChange={(e) => setDefaultMsg(e.target.value)}
                 rows={2}
                 placeholder="Halo Aladzan Corpora, saya ingin membeli lisensi resmi..."
-                className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white leading-relaxed"
+                className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white leading-relaxed focus:outline-none focus:border-emerald-500"
               />
             </div>
           </div>
@@ -865,7 +865,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold tracking-tight shadow-md disabled:opacity-50"
+              className="px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold tracking-tight shadow-md disabled:opacity-50 transition-all"
             >
               Simpan Konfigurasi Kontak
             </button>

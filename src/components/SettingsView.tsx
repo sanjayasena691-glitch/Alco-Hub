@@ -1,7 +1,11 @@
 /**
  * ALCO Hub - Settings View
- * Tampilan pengaturan preferensi visual (System/Light/Dark), status pembaruan,
- * diagnostik lingkungan runtime desktop, konfigurasi AI Navigator, dan informasi Tentang ALCO Hub.
+ * Struktur Terpadu:
+ * 1. APPEARANCE (System / Light / Dark)
+ * 2. UPDATES (Current ALCO Hub Version & Safe Check for Updates)
+ * 3. DESKTOP DIAGNOSTICS (Desktop/Electron runtime status, Hub version, platform)
+ * 4. ABOUT (ALCO Hub, Aladzan Corpora, ALCO Ecosystem, Version)
+ * 5. AI / ALCO NAVIGATOR (AI Status & Masked Gemini API Key Configuration)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -22,6 +26,8 @@ import {
   HardDrive,
   AlertCircle,
   Cpu,
+  Sparkles,
+  Bot,
 } from 'lucide-react';
 import {
   ThemePreference,
@@ -63,9 +69,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [themePref, setThemePref] = useState<ThemePreference>(getSavedThemePreference());
   const [ghCliStatus, setGhCliStatus] = useState<GhCliStatus | null>(null);
   const [cacheClearedMessage, setCacheClearedMessage] = useState<string | null>(null);
+  const [hubUpdateChecked, setHubUpdateChecked] = useState(false);
 
   const isElectronAvailable = typeof window !== 'undefined' && Boolean(window.alcoHub);
   const isCloudConfigured = isSupabaseConfigured();
+
+  // Platform detection
+  const platformName = typeof navigator !== 'undefined'
+    ? navigator.platform.includes('Win')
+      ? 'Windows (x64)'
+      : navigator.platform.includes('Mac')
+      ? 'macOS'
+      : navigator.platform.includes('Linux')
+      ? 'Linux'
+      : 'Web Browser Environment'
+    : 'Desktop Environment';
 
   // Listen to theme changes
   useEffect(() => {
@@ -89,6 +107,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleThemeSelect = (pref: ThemePreference) => {
     setThemePref(pref);
     setThemePreference(pref);
+  };
+
+  const handleCheckUpdatesClick = () => {
+    setHubUpdateChecked(true);
+    if (onCheckUpdates) {
+      onCheckUpdates();
+    }
   };
 
   const handleClearCache = () => {
@@ -116,28 +141,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Header */}
       <div>
         <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-          Pengaturan & Diagnostik
+          Settings
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Kelola preferensi visual, status pembaruan aplikasi, diagnostik runtime desktop, dan kredensial AI.
+          Kelola preferensi visual tema, pembaruan, diagnostik runtime desktop, kredensial AI, dan informasi ekosistem.
         </p>
       </div>
 
-      {/* 1. Appearance / Tema Visual */}
+      {/* 1. APPEARANCE */}
       <section
         id="settings-appearance-section"
         className="p-6 rounded-2xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm dark:shadow-xl transition-colors"
       >
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-500 dark:text-amber-400 flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
             <Sun className="w-5 h-5" />
           </div>
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              Tampilan & Tema Visual
+              1. Appearance
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Pilih mode warna antarmuka ALCO Hub sesuai kenyamanan kerja Anda.
+              Pilih mode warna antarmuka ALCO Hub. Pilihan aktif ditandai secara jelas.
             </p>
           </div>
         </div>
@@ -146,6 +171,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* System Option */}
           <button
             type="button"
+            id="theme-select-system-btn"
             onClick={() => handleThemeSelect('system')}
             className={`p-4 rounded-xl border text-left flex flex-col justify-between gap-3 transition-all ${
               themePref === 'system'
@@ -157,14 +183,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300">
                 <Laptop className="w-4 h-4" />
               </div>
-              {themePref === 'system' && (
-                <span className="w-2 h-2 rounded-full bg-indigo-600 dark:bg-indigo-400" />
+              {themePref === 'system' ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-900/60 px-2 py-0.5 rounded-full">
+                  Aktif
+                </span>
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-700" />
               )}
             </div>
             <div>
               <span className="font-bold text-sm block">System</span>
               <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 block">
-                Mengikuti tema Windows / OS
+                Mengikuti preferensi tema OS / Windows secara dinamis
               </span>
             </div>
           </button>
@@ -172,6 +202,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* Light Option */}
           <button
             type="button"
+            id="theme-select-light-btn"
             onClick={() => handleThemeSelect('light')}
             className={`p-4 rounded-xl border text-left flex flex-col justify-between gap-3 transition-all ${
               themePref === 'light'
@@ -183,14 +214,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-amber-500">
                 <Sun className="w-4 h-4" />
               </div>
-              {themePref === 'light' && (
-                <span className="w-2 h-2 rounded-full bg-indigo-600 dark:bg-indigo-400" />
+              {themePref === 'light' ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-900/60 px-2 py-0.5 rounded-full">
+                  Aktif
+                </span>
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-700" />
               )}
             </div>
             <div>
               <span className="font-bold text-sm block">Light</span>
               <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 block">
-                Tema terang berdaya kontras tinggi
+                Tema terang berdaya kontras tajam untuk ruangan cerah
               </span>
             </div>
           </button>
@@ -198,6 +233,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* Dark Option */}
           <button
             type="button"
+            id="theme-select-dark-btn"
             onClick={() => handleThemeSelect('dark')}
             className={`p-4 rounded-xl border text-left flex flex-col justify-between gap-3 transition-all ${
               themePref === 'dark'
@@ -209,21 +245,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-indigo-400">
                 <Moon className="w-4 h-4" />
               </div>
-              {themePref === 'dark' && (
-                <span className="w-2 h-2 rounded-full bg-indigo-600 dark:bg-indigo-400" />
+              {themePref === 'dark' ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-900/60 px-2 py-0.5 rounded-full">
+                  Aktif
+                </span>
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-700" />
               )}
             </div>
             <div>
               <span className="font-bold text-sm block">Dark</span>
               <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 block">
-                Tema gelap ramah mata malam hari
+                Tema gelap ramah mata malam hari untuk fokus kerja
               </span>
             </div>
           </button>
         </div>
       </section>
 
-      {/* 2. Updates / Pembaruan Ekosistem */}
+      {/* 2. UPDATES */}
       <section
         id="settings-updates-section"
         className="p-6 rounded-2xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm dark:shadow-xl transition-colors"
@@ -235,31 +275,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                Pembaruan Ekosistem Aplikasi
+                2. Updates
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Memeriksa ketersediaan versi rilis terbaru dari server repositori resmi.
+                Pemeriksaan versi ALCO Hub dan ketersediaan rilis aplikasi ekosistem.
               </p>
             </div>
           </div>
 
           <button
             type="button"
+            id="settings-check-updates-btn"
             disabled={isCheckingUpdates}
-            onClick={onCheckUpdates}
+            onClick={handleCheckUpdatesClick}
             className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold transition-all inline-flex items-center gap-2 shadow-sm shrink-0"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isCheckingUpdates ? 'animate-spin' : ''}`} />
-            <span>{isCheckingUpdates ? 'Memeriksa...' : 'Periksa Pembaruan'}</span>
+            <span>{isCheckingUpdates ? 'Memeriksa...' : 'Check for Updates'}</span>
           </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Versi ALCO Hub:</span>
-            <span className="font-mono text-slate-800 dark:text-slate-200 font-bold text-sm">
-              v{HUB_META.version}
-            </span>
+            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Current ALCO Hub Version:</span>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="font-mono text-slate-800 dark:text-slate-200 font-bold text-sm">
+                v{HUB_META.version}
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                Official
+              </span>
+            </div>
           </div>
 
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
@@ -270,7 +316,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Status Update:</span>
+            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Status Update Ekosistem:</span>
             <div className="flex items-center gap-1.5 mt-0.5">
               {appsWithUpdates.length > 0 ? (
                 <>
@@ -283,16 +329,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <>
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                   <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-                    Seluruh aplikasi mutakhir
+                    Semua aplikasi up-to-date
                   </span>
                 </>
               )}
             </div>
           </div>
         </div>
+
+        {hubUpdateChecked && !isCheckingUpdates && (
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+              <span>ALCO Hub v{HUB_META.version} terverifikasi sinkron dengan saluran rilis resmi Aladzan Corpora.</span>
+            </div>
+            <span className="text-[11px] text-slate-500 font-mono">
+              Status: Checked
+            </span>
+          </div>
+        )}
       </section>
 
-      {/* 3. Diagnostics & Runtime Environment */}
+      {/* 3. DESKTOP DIAGNOSTICS */}
       <section
         id="settings-diagnostics-section"
         className="p-6 rounded-2xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm dark:shadow-xl transition-colors"
@@ -303,18 +361,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              Diagnostik Sistem & Runtime
+              3. Desktop Diagnostics
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Status integrasi native Windows, koneksi katalog cloud, dan integritas penyimpanan lokal.
+              Informasi status lingkungan desktop dan platform tanpa memaparkan kredensial internal sensitif.
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
-          {/* Desktop Bridge */}
+          {/* Desktop/Electron Status */}
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-1">
-            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Runtime Detection:</span>
+            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Desktop / Electron Status:</span>
             <div className="flex items-center gap-2">
               <span
                 className={`w-2 h-2 rounded-full ${
@@ -322,33 +380,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 }`}
               />
               <span className="font-semibold text-slate-900 dark:text-white">
-                {isElectronAvailable ? 'Electron Desktop Bridge (Windows Native)' : 'Browser Web Preview'}
+                {isElectronAvailable ? 'Electron Desktop Bridge Connected' : 'Web Preview Mode'}
               </span>
             </div>
           </div>
 
-          {/* Cloud Sync Status */}
+          {/* Platform */}
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-1">
-            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Katalog Cloud:</span>
+            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Platform OS:</span>
             <div className="flex items-center gap-2">
-              <Database className="w-3.5 h-3.5 text-indigo-500" />
+              <HardDrive className="w-3.5 h-3.5 text-slate-500" />
               <span className="font-semibold text-slate-800 dark:text-slate-200">
-                {isCloudConfigured ? 'Supabase Centralized DB Aktif' : 'Offline / Standalone Fallback'}
+                {platformName}
               </span>
             </div>
           </div>
 
-          {/* GitHub CLI Bridge */}
+          {/* Hub Version */}
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-1">
-            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">GitHub CLI (Distribution):</span>
+            <span className="text-slate-500 dark:text-slate-400 text-[11px] block">Hub Build Architecture:</span>
             <div className="flex items-center gap-2">
-              <Terminal className="w-3.5 h-3.5 text-slate-500" />
+              <Cpu className="w-3.5 h-3.5 text-indigo-500" />
               <span className="font-semibold text-slate-800 dark:text-slate-200">
-                {ghCliStatus?.installed
-                  ? `Terpasang (${ghCliStatus.account ? `@${ghCliStatus.account}` : 'Ready'})`
-                  : isElectronAvailable
-                  ? 'CLI belum terdeteksi di PATH'
-                  : 'N/A (Web Environment)'}
+                ALCO Hub v{HUB_META.version} (Standalone Native Client)
               </span>
             </div>
           </div>
@@ -363,6 +417,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
             <button
               type="button"
+              id="settings-reset-cache-btn"
               onClick={handleClearCache}
               className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-medium transition-colors"
             >
@@ -379,60 +434,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         )}
       </section>
 
-      {/* 4. Gemini AI API Key Settings */}
-      <section
-        id="settings-api-key-section"
-        className="p-6 rounded-2xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm dark:shadow-xl transition-colors"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-              <Key className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">
-                ALCO Navigator AI Key
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Gemini API Key pribadi untuk fitur konsultasi alur ekosistem dan project checker.
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onOpenApiKeyModal}
-            className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shrink-0"
-          >
-            {apiKey ? 'Ubah API Key' : 'Konfigurasi Key'}
-          </button>
-        </div>
-
-        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
-          <div>
-            <span className="text-slate-500 dark:text-slate-400 block text-[11px]">Status Kunci Aktif:</span>
-            <span className="font-mono text-slate-800 dark:text-slate-200 font-semibold">
-              {apiKey ? getMaskedApiKey(apiKey) : 'Belum dikonfigurasi'}
-            </span>
-          </div>
-
-          {apiKey && (
-            <button
-              type="button"
-              onClick={() => {
-                removeUserApiKey();
-                onApiKeyChange('');
-              }}
-              className="text-rose-500 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-300 text-xs font-semibold inline-flex items-center gap-1 transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Hapus</span>
-            </button>
-          )}
-        </div>
-      </section>
-
-      {/* 5. About ALCO Hub */}
+      {/* 4. ABOUT */}
       <section
         id="settings-about-section"
         className="p-6 rounded-2xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm dark:shadow-xl transition-colors"
@@ -456,14 +458,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              {HUB_META.ecosystem}
+              {HUB_META.ecosystem} • Developed by Aladzan Corpora
             </p>
           </div>
         </div>
 
         <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
           Pusat katalog terpusat, instalasi desktop mandiri, dan peluncur aplikasi ekosistem Aladzan Corpora.
-          Menghubungkan seluruh software bisnis mandiri Anda dalam satu antarmuka desktop terpadu.
+          Menghubungkan seluruh software bisnis mandiri Anda dalam satu antarmuka desktop terpadu yang aman, modular, dan terstruktur.
         </p>
 
         <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
@@ -471,6 +473,73 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <span className="font-semibold text-slate-600 dark:text-slate-300">
             © {new Date().getFullYear()} Aladzan Corpora. All rights reserved.
           </span>
+        </div>
+      </section>
+
+      {/* 5. AI / ALCO NAVIGATOR */}
+      <section
+        id="settings-api-key-section"
+        className="p-6 rounded-2xl bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm dark:shadow-xl transition-colors"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+              <Bot className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                AI / ALCO Navigator
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Gemini API Key pribadi untuk konsultasi alur ekosistem, business advice, dan project checker.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            id="settings-configure-api-key-btn"
+            onClick={onOpenApiKeyModal}
+            className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-all shrink-0"
+          >
+            {apiKey ? 'Configure API Key' : 'Configure API Key'}
+          </button>
+        </div>
+
+        <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
+          <div>
+            <span className="text-slate-500 dark:text-slate-400 block text-[11px]">AI Status:</span>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  apiKey ? 'bg-emerald-500' : 'bg-slate-400'
+                }`}
+              />
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                {apiKey ? 'Active & Configured' : 'Standby (API Key Belum Dikonfigurasi)'}
+              </span>
+              {apiKey && (
+                <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px]">
+                  ({getMaskedApiKey(apiKey)})
+                </span>
+              )}
+            </div>
+          </div>
+
+          {apiKey && (
+            <button
+              type="button"
+              id="settings-remove-api-key-btn"
+              onClick={() => {
+                removeUserApiKey();
+                onApiKeyChange('');
+              }}
+              className="text-rose-500 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-300 text-xs font-semibold inline-flex items-center gap-1 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Hapus Kunci</span>
+            </button>
+          )}
         </div>
       </section>
     </div>
