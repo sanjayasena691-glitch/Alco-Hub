@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('alcoHub', {
   checkGhCliStatus: () => ipcRenderer.invoke('check-gh-cli-status'),
   publishReleaseGhCli: (params) => ipcRenderer.invoke('publish-release-gh-cli', params),
   verifyGhReleaseAsset: (params) => ipcRenderer.invoke('verify-gh-release-asset', params),
+  listGhAppReleases: (params) => ipcRenderer.invoke('list-gh-app-releases', params),
+  deleteGhRelease: (params) => ipcRenderer.invoke('delete-gh-release', params),
   onReleasePublishProgress: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, data) => callback(data);

@@ -308,6 +308,46 @@ export interface InstallResult {
   shaMismatch?: boolean;
 }
 
+export type ReleaseBadgeStatus = 'LATEST' | 'PREVIOUS' | 'OLD';
+
+export interface GitHubReleaseHistoryItem {
+  id?: number;
+  tagName: string;
+  name: string;
+  version: string;
+  publishedAt: string | null;
+  createdAt?: string | null;
+  isLatest: boolean;
+  isDraft?: boolean;
+  isPrerelease?: boolean;
+  statusBadge: ReleaseBadgeStatus;
+  htmlUrl: string;
+  assetFilename?: string | null;
+  downloadUrl?: string | null;
+  size?: number;
+  body?: string;
+  isActiveInCatalog?: boolean;
+}
+
+export interface ListAppReleasesParams {
+  appId: string;
+  appName?: string;
+  repoOwner?: string;
+  repoName?: string;
+}
+
+export interface DeleteGhReleaseParams {
+  tag: string;
+  repoOwner?: string;
+  repoName?: string;
+}
+
+export interface DeleteGhReleaseResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
 declare global {
   interface Window {
     alcoHub?: {
@@ -343,6 +383,12 @@ declare global {
           htmlUrl?: string;
         };
       }>;
+      listGhAppReleases?: (params: ListAppReleasesParams) => Promise<{
+        success: boolean;
+        releases: GitHubReleaseHistoryItem[];
+        error?: string;
+      }>;
+      deleteGhRelease?: (params: DeleteGhReleaseParams) => Promise<DeleteGhReleaseResult>;
       onReleasePublishProgress?: (callback: (data: OneClickPublishProgressEvent) => void) => () => void;
     };
   }

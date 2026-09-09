@@ -36,6 +36,12 @@ import {
   Zap,
   RefreshCw,
   Sliders,
+  Trash2,
+  History,
+  Calendar,
+  AlertCircle,
+  X,
+  Download,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -43,6 +49,7 @@ import {
   ReleaseUploadStatus,
   AdminAuthSession,
   GhCliStatus,
+  GitHubReleaseHistoryItem,
 } from '../types';
 import {
   executeOneClickRelease,
@@ -54,6 +61,8 @@ import {
   generateGhCliCommand,
   syncCliReleaseToSupabase,
   discoverAndVerifyGitHubReleaseAsset,
+  fetchAppReleaseHistory,
+  deleteAppReleaseFromGitHub,
   DiscoveredReleaseAsset,
   GitHubPublishConfig,
   DEFAULT_GITHUB_REPO_OWNER,
@@ -130,6 +139,16 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
   } | null>(null);
   const [isRetryingSupabase, setIsRetryingSupabase] = useState(false);
 
+  // Release History & Manual Management States
+  const [releaseHistory, setReleaseHistory] = useState<GitHubReleaseHistoryItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [deletingTag, setDeletingTag] = useState<string | null>(null);
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<GitHubReleaseHistoryItem | null>(null);
+  const [activeVersionWarning, setActiveVersionWarning] = useState<string | null>(null);
+  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+  const [actionErrorMsg, setActionErrorMsg] = useState<string | null>(null);
+
   // Manual CLI Mode states
   const [isSyncingManualMetadata, setIsSyncingManualMetadata] = useState(false);
   const [manualSyncResultMsg, setManualSyncResultMsg] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -152,6 +171,90 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
       setVersionInput(suggestNextVersion(currentLatest));
     }
   }, [selectedApp]);
+
+  // Load Release History for selected application
+  const loadReleaseHistory = useCallback(async () => {
+    if (!selectedApp) return;
+    setIsLoadingHistory(true);
+    setHistoryError(null);
+    try {
+      const res = await fetchAppReleaseHistory(selectedApp, ghConfig);
+      if (res.success) {
+        setReleaseHistory(res.releases || []);
+      } else {
+        setHistoryError(res.error || 'Gagal memuat riwayat rilis dari GitHub.');
+      }
+    } catch (err: any) {
+      setHistoryError(err?.message || 'Gagal terhubung ke GitHub Releases.');
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [selectedApp, ghConfig]);
+
+  useEffect(() => {
+    loadReleaseHistory();
+  }, [selectedAppId, loadReleaseHistory]);
+
+  // Handler: Inisiasi Hapus Release dengan proteksi versi aktif
+  const handleInitiateDelete = (item: GitHubReleaseHistoryItem) => {
+    setActionErrorMsg(null);
+    setActionSuccessMsg(null);
+
+    // Proteksi: Jika release sedang digunakan sebagai versi aktif di Supabase/katalog
+    if (item.isActiveInCatalog) {
+      setActiveVersionWarning(
+        `Release ini sedang digunakan sebagai versi aktif.\nPublikasikan atau aktifkan versi lain sebelum menghapusnya.`
+      );
+      return;
+    }
+
+    // Owner role check
+    if (!adminSession.isAuthenticated || adminSession.role !== 'owner') {
+      setActionErrorMsg('Akses Ditolak: Penghapusan release hanya tersedia untuk Owner.');
+      return;
+    }
+
+    setDeleteConfirmItem(item);
+  };
+
+  // Handler: Eksekusi Penghapusan Release dari GitHub
+  const handleExecuteDelete = async () => {
+    if (!deleteConfirmItem) return;
+
+    if (!adminSession.isAuthenticated || adminSession.role !== 'owner') {
+      setActionErrorMsg('Akses Ditolak: Anda harus login sebagai Owner.');
+      return;
+    }
+
+    const tagToDelete = deleteConfirmItem.tagName;
+    setDeletingTag(tagToDelete);
+    setActionErrorMsg(null);
+
+    try {
+      const res = await deleteAppReleaseFromGitHub(tagToDelete, ghConfig);
+      if (res.success) {
+        setActionSuccessMsg(res.message || `Release "${tagToDelete}" berhasil dihapus dari GitHub.`);
+        setDeleteConfirmItem(null);
+        await loadReleaseHistory();
+        setTimeout(() => setActionSuccessMsg(null), 6000);
+      } else {
+        setActionErrorMsg(res.error || `Gagal menghapus release ${tagToDelete} dari GitHub.`);
+      }
+    } catch (err: any) {
+      setActionErrorMsg(err?.message || 'Terjadi kesalahan sistem saat menghapus release.');
+    } finally {
+      setDeletingTag(null);
+    }
+  };
+
+  // Handler: Buka URL Eksternal di Browser Desktop
+  const handleOpenReleaseUrl = (url: string) => {
+    if (window.alcoHub?.openExternal) {
+      window.alcoHub.openExternal(url);
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
 
   // Check GitHub CLI status on mount
   const checkGhCli = useCallback(async () => {
@@ -373,6 +476,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
         return a;
       });
       onCatalogUpdated(updatedList);
+      loadReleaseHistory();
     } else if (result.stage === 'supabase_sync_failed' && result.data) {
       // Keep pending data for retry
       setPendingSupabaseData({
@@ -420,6 +524,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
         return a;
       });
       onCatalogUpdated(updatedList);
+      loadReleaseHistory();
     } else {
       alert(`Gagal menyinkronkan metadata ke Supabase: ${cloudSaveRes.message}`);
     }
@@ -502,6 +607,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
       const targetId = selectedApp.appId || selectedApp.id;
       const updatedList = apps.map((a) => ((a.appId && a.appId === targetId) || a.id === targetId ? res.updatedApp! : a));
       onCatalogUpdated(updatedList);
+      loadReleaseHistory();
     } else {
       setManualSyncResultMsg({ type: 'error', message: res.message || 'GitHub release asset tidak ditemukan. Metadata tidak dipublish.' });
     }
@@ -558,6 +664,7 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
         return a;
       });
       onCatalogUpdated(updatedList);
+      loadReleaseHistory();
     }
   };
 
@@ -1701,6 +1808,397 @@ export const ReleaseManager: React.FC<ReleaseManagerProps> = ({
             Upload via Direct PAT Stream
           </button>
         </form>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SECTION: GITHUB RELEASE HISTORY & MANUAL RELEASE MANAGEMENT               */}
+      {/* ========================================================================= */}
+      <div id="alco-release-history-section" className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5 shadow-xl">
+        {/* Section Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5" />
+                Release History
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-950 border border-slate-800">
+                {ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold text-slate-300 bg-slate-800 border border-slate-700">
+                {selectedApp.name} ({selectedApp.appId || selectedApp.id})
+              </span>
+            </div>
+            <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
+              <span>GitHub Release History & Installer Assets</span>
+            </h3>
+            <p className="text-xs text-slate-400">
+              Daftar release resmi yang tersimpan di repository GitHub. Riwayat versi lama tetap disimpan untuk kebutuhan rollback.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={loadReleaseHistory}
+              disabled={isLoadingHistory}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingHistory ? 'animate-spin text-indigo-400' : 'text-slate-400'}`} />
+              <span>Refresh History</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Action Result Notifications */}
+        {actionSuccessMsg && (
+          <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center justify-between gap-2 animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{actionSuccessMsg}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActionSuccessMsg(null)}
+              className="text-emerald-400 hover:text-emerald-200 p-1"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {actionErrorMsg && (
+          <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between gap-2 animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{actionErrorMsg}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActionErrorMsg(null)}
+              className="text-rose-400 hover:text-rose-200 p-1"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* History Content */}
+        {isLoadingHistory ? (
+          <div className="space-y-3 py-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 animate-pulse space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="h-4 w-32 bg-slate-800 rounded"></div>
+                  <div className="h-4 w-16 bg-slate-800 rounded"></div>
+                </div>
+                <div className="h-3 w-48 bg-slate-800/60 rounded"></div>
+              </div>
+            ))}
+          </div>
+        ) : historyError ? (
+          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs space-y-2">
+            <div className="font-bold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
+              <span>Gagal Memuat Riwayat Release</span>
+            </div>
+            <p className="text-[11px] text-rose-200/90">{historyError}</p>
+            <button
+              type="button"
+              onClick={loadReleaseHistory}
+              className="px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold"
+            >
+              Coba Lagi
+            </button>
+          </div>
+        ) : releaseHistory.length === 0 ? (
+          <div className="p-8 rounded-xl bg-slate-950/40 border border-slate-800/80 text-center space-y-2">
+            <div className="w-10 h-10 rounded-xl bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
+              <History className="w-5 h-5" />
+            </div>
+            <h4 className="text-xs font-bold text-white">Belum Ada Release di GitHub</h4>
+            <p className="text-[11px] text-slate-400 max-w-md mx-auto">
+              Belum ada rilis resmi untuk <strong>{selectedApp.name}</strong> di repository {ghConfig.owner || DEFAULT_GITHUB_REPO_OWNER}/{ghConfig.repo || DEFAULT_GITHUB_REPO_NAME}. Publikasikan rilis pertama melalui form di atas.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {releaseHistory.map((item) => {
+              const isCopied = copiedKey === item.tagName;
+              return (
+                <div
+                  key={item.tagName}
+                  className="p-4 rounded-xl bg-slate-950/70 border border-slate-800/90 hover:border-slate-700 transition-all space-y-3"
+                >
+                  {/* Top Row: Version, Title, Badges */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <span className="text-sm font-black text-white tracking-tight">
+                        v{item.version}
+                      </span>
+                      <span className="text-xs font-semibold text-slate-300">
+                        {item.name}
+                      </span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-indigo-300">
+                        {item.tagName}
+                      </span>
+
+                      {/* Status Badges: LATEST / PREVIOUS / OLD */}
+                      {item.statusBadge === 'LATEST' && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                          Latest Release
+                        </span>
+                      )}
+                      {item.statusBadge === 'PREVIOUS' && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                          Previous Version
+                        </span>
+                      )}
+                      {item.statusBadge === 'OLD' && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-medium uppercase bg-slate-900 text-slate-400 border border-slate-800">
+                          Archive / Old
+                        </span>
+                      )}
+
+                      {/* Active in Catalog Badge */}
+                      {item.isActiveInCatalog && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase bg-indigo-500/10 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+                          <ShieldCheck className="w-3 h-3 text-indigo-400" />
+                          Versi Aktif di Katalog
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 flex items-center gap-1.5 shrink-0">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>
+                        {item.publishedAt
+                          ? new Date(item.publishedAt).toLocaleDateString('id-ID', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : 'Tidak diketahui'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Metadata Row: Asset file, size, download info */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 text-xs bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/60 font-mono">
+                    <div className="flex items-center gap-2 truncate">
+                      <FileCode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <span className="text-slate-400 font-sans text-[11px]">Asset:</span>
+                      <span className="text-slate-200 truncate text-[11px]" title={item.assetFilename || 'Tidak ada file .exe'}>
+                        {item.assetFilename || 'Tidak ada file .exe'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Download className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <span className="text-slate-400 font-sans text-[11px]">Ukuran:</span>
+                      <span className="text-slate-200 text-[11px]">
+                        {item.size && item.size > 0
+                          ? `${Math.round((item.size / 1024 / 1024) * 100) / 100} MB`
+                          : '-'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 sm:col-span-2 md:col-span-1 truncate">
+                      <Github className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                      <span className="text-slate-400 font-sans text-[11px]">Release URL:</span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenReleaseUrl(item.htmlUrl)}
+                        className="text-indigo-400 hover:text-indigo-300 underline truncate text-[11px] text-left"
+                      >
+                        GitHub Tag
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      {/* View Release */}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenReleaseUrl(item.htmlUrl)}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>View Release</span>
+                      </button>
+
+                      {/* Copy Download URL */}
+                      {item.downloadUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(item.downloadUrl!, item.tagName)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                        >
+                          {isCopied ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <span className="text-emerald-400">Tersalin!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5 text-slate-400" />
+                              <span>Copy Download URL</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Delete Release Button (Owner Only) */}
+                    {adminSession.isAuthenticated && adminSession.role === 'owner' && (
+                      <button
+                        type="button"
+                        onClick={() => handleInitiateDelete(item)}
+                        disabled={deletingTag === item.tagName}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border ${
+                          item.isActiveInCatalog
+                            ? 'bg-slate-900/50 text-slate-500 border-slate-800 hover:border-amber-500/30 hover:text-amber-400'
+                            : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/20 hover:border-rose-500/40'
+                        }`}
+                        title={
+                          item.isActiveInCatalog
+                            ? 'Release ini sedang aktif di katalog. Klik untuk melihat informasi proteksi.'
+                            : 'Hapus release ini dari GitHub'
+                        }
+                      >
+                        {deletingTag === item.tagName ? (
+                          <>
+                            <RotateCw className="w-3.5 h-3.5 animate-spin text-rose-400" />
+                            <span>Menghapus...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                            <span>Delete Release</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ========================================================================= */}
+      {/* MODAL: DELETE CONFIRMATION DIALOG                                         */}
+      {/* ========================================================================= */}
+      {deleteConfirmItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 text-rose-400 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  Hapus {selectedApp.name} v{deleteConfirmItem.version}?
+                </h3>
+                <p className="text-xs text-rose-400 font-mono">
+                  Tag: {deleteConfirmItem.tagName}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              GitHub Release dan installer di dalam release ini akan dihapus. Tindakan ini tidak dapat dibatalkan.
+            </p>
+
+            {deleteConfirmItem.assetFilename && (
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-400 space-y-1">
+                <div>
+                  <span className="text-slate-500 font-sans">File Installer: </span>
+                  <span className="text-slate-200">{deleteConfirmItem.assetFilename}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 font-sans">Ukuran: </span>
+                  <span className="text-slate-200">
+                    {deleteConfirmItem.size && deleteConfirmItem.size > 0
+                      ? `${Math.round((deleteConfirmItem.size / 1024 / 1024) * 100) / 100} MB`
+                      : '-'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmItem(null)}
+                disabled={deletingTag !== null}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteDelete}
+                disabled={deletingTag !== null}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
+              >
+                {deletingTag === deleteConfirmItem.tagName ? (
+                  <>
+                    <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Menghapus...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Release</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: ACTIVE VERSION PROTECTION WARNING                                  */}
+      {/* ========================================================================= */}
+      {activeVersionWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-md p-6 rounded-2xl bg-slate-900 border border-amber-500/30 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  Release Sedang Digunakan Sebagai Versi Aktif
+                </h3>
+                <p className="text-xs text-amber-400">
+                  Proteksi Katalog ALCO Hub
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 whitespace-pre-line leading-relaxed">
+              {activeVersionWarning}
+            </div>
+
+            <div className="flex items-center justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setActiveVersionWarning(null)}
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all shadow-md"
+              >
+                Mengerti
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

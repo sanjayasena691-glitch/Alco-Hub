@@ -13,7 +13,7 @@
  * - Direct In-App Browser Stream (via GitHub Personal Access Token) ditandai sebagai @deprecated dan hanya dapat diakses melalui menu Advanced Tools.
  */
 
-import { EcosystemApp, ReleaseUploadProgress } from '../types';
+import { EcosystemApp, ReleaseUploadProgress, GitHubReleaseHistoryItem } from '../types';
 import { saveAppToCloud } from './storeService';
 import { getSupabase } from './supabaseClient';
 
@@ -1103,4 +1103,238 @@ export async function executeOneClickRelease({
       error: errorMsg,
     };
   }
+}
+
+/**
+ * Mengambil daftar seluruh GitHub Releases untuk aplikasi spesifik.
+ * Mengutamakan Electron GitHub CLI engine, dengan fallback ke HTTPS GitHub API.
+ */
+export async function fetchAppReleaseHistory(
+  app: EcosystemApp,
+  ghConfig?: GitHubPublishConfig
+): Promise<{ success: boolean; releases: GitHubReleaseHistoryItem[]; error?: string }> {
+  const appId = app.appId || app.id;
+  const repoOwner = ghConfig?.owner || DEFAULT_GITHUB_REPO_OWNER;
+  const repoName = ghConfig?.repo || DEFAULT_GITHUB_REPO_NAME;
+  const activeVersion = (app.latestVersion || app.version || '').trim();
+  const activeDownloadUrl = (app.downloadUrl || '').trim();
+
+  // 1. Prioritaskan Electron GitHub CLI
+  if (window.alcoHub?.listGhAppReleases) {
+    try {
+      const res = await window.alcoHub.listGhAppReleases({
+        appId,
+        appName: app.name,
+        repoOwner,
+        repoName,
+      });
+
+      if (res.success && Array.isArray(res.releases)) {
+        // Tandai release yang sedang aktif di katalog Supabase
+        const processed = res.releases.map((r) => {
+          const isCurrentActive =
+            (activeVersion && (r.version === activeVersion || r.tagName.includes(activeVersion))) ||
+            (activeDownloadUrl && r.downloadUrl === activeDownloadUrl);
+
+          return {
+            ...r,
+            isActiveInCatalog: Boolean(isCurrentActive),
+          };
+        });
+
+        return { success: true, releases: processed };
+      }
+    } catch (err) {
+      console.warn('[Release History] Electron IPC failed, falling back to HTTPS API:', err);
+    }
+  }
+
+  // 2. Fallback via browser HTTPS fetch
+  try {
+    const url = `https://api.github.com/repos/${repoOwner}/${repoName}/releases?per_page=100`;
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    if (ghConfig?.token) {
+      headers.Authorization = `Bearer ${ghConfig.token}`;
+    }
+
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `GitHub API HTTP ${response.status}: ${response.statusText}`,
+        releases: [],
+      };
+    }
+
+    const rawReleases = await response.json();
+    if (!Array.isArray(rawReleases)) {
+      return { success: true, releases: [] };
+    }
+
+    const cleanAppId = appId
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    const appSlugKeywords = cleanAppId
+      .split('-')
+      .filter((w) => w.length > 2 && w !== 'alco' && w !== 'app');
+
+    const isReleaseForApp = (tagName: string, releaseTitle: string) => {
+      const rTag = (tagName || '').toLowerCase();
+      const rTitle = (releaseTitle || '').toLowerCase();
+
+      if (rTag.includes(cleanAppId) || rTitle.includes(cleanAppId)) return true;
+      if (cleanAppId.includes('creative') && (rTag.includes('creative') || rTitle.includes('creative'))) return true;
+      if (cleanAppId.includes('audio') && (rTag.includes('audio') || rTitle.includes('audio'))) return true;
+      if (cleanAppId.includes('content') && (rTag.includes('content') || rTitle.includes('content'))) return true;
+      if (cleanAppId.includes('render') && (rTag.includes('render') || rTitle.includes('render'))) return true;
+      if (cleanAppId.includes('palette') && (rTag.includes('palette') || rTitle.includes('palette'))) return true;
+
+      if (appSlugKeywords.length > 0) {
+        const matchCount = appSlugKeywords.filter((kw) => rTag.includes(kw) || rTitle.includes(kw)).length;
+        if (matchCount >= Math.min(2, appSlugKeywords.length)) return true;
+      }
+
+      return false;
+    };
+
+    const appReleases: GitHubReleaseHistoryItem[] = [];
+
+    for (const rel of rawReleases) {
+      if (isReleaseForApp(rel.tag_name, rel.name)) {
+        const assets = Array.isArray(rel.assets) ? rel.assets : [];
+        const exeAsset = assets.find((a: any) => a.name?.toLowerCase().endsWith('.exe')) || assets[0];
+        const verMatch = (rel.tag_name || '').match(/v?([0-9]+(\.[0-9]+)*)/i) || (rel.name || '').match(/v?([0-9]+(\.[0-9]+)*)/i);
+        const version = verMatch ? verMatch[1] : rel.tag_name.replace(/^[a-z_-]+/i, '');
+
+        const isCurrentActive =
+          (activeVersion && (version === activeVersion || rel.tag_name.includes(activeVersion))) ||
+          (activeDownloadUrl && exeAsset?.browser_download_url === activeDownloadUrl);
+
+        appReleases.push({
+          id: rel.id,
+          tagName: rel.tag_name,
+          name: rel.name || rel.tag_name,
+          version: version || '1.0.0',
+          publishedAt: rel.published_at || rel.created_at || null,
+          createdAt: rel.created_at || null,
+          isLatest: Boolean(rel.make_latest || false),
+          isDraft: Boolean(rel.draft),
+          isPrerelease: Boolean(rel.prerelease),
+          statusBadge: 'OLD',
+          htmlUrl: rel.html_url || `https://github.com/${repoOwner}/${repoName}/releases/tag/${encodeURIComponent(rel.tag_name)}`,
+          assetFilename: exeAsset?.name || null,
+          downloadUrl: exeAsset?.browser_download_url || null,
+          size: exeAsset?.size || 0,
+          body: rel.body || '',
+          isActiveInCatalog: Boolean(isCurrentActive),
+        });
+      }
+    }
+
+    appReleases.sort((a, b) => {
+      const timeA = new Date(a.publishedAt || a.createdAt || 0).getTime();
+      const timeB = new Date(b.publishedAt || b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+
+    const formatted = appReleases.map((item, index) => {
+      let statusBadge: 'LATEST' | 'PREVIOUS' | 'OLD' = 'OLD';
+      if (index === 0) statusBadge = 'LATEST';
+      else if (index === 1) statusBadge = 'PREVIOUS';
+      return {
+        ...item,
+        statusBadge,
+      };
+    });
+
+    return { success: true, releases: formatted };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: `Gagal mengambil riwayat rilis: ${err?.message || 'Koneksi gagal'}`,
+      releases: [],
+    };
+  }
+}
+
+/**
+ * Menghapus GitHub Release dan Git Tag terkait via GitHub CLI di Electron.
+ */
+export async function deleteAppReleaseFromGitHub(
+  tag: string,
+  ghConfig?: GitHubPublishConfig
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  const repoOwner = ghConfig?.owner || DEFAULT_GITHUB_REPO_OWNER;
+  const repoName = ghConfig?.repo || DEFAULT_GITHUB_REPO_NAME;
+
+  if (window.alcoHub?.deleteGhRelease) {
+    return window.alcoHub.deleteGhRelease({
+      tag,
+      repoOwner,
+      repoName,
+    });
+  }
+
+  // Fallback direct browser API (requires PAT with repo write permission)
+  if (ghConfig?.token) {
+    try {
+      // 1. Get release id by tag
+      const getUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/tags/${encodeURIComponent(tag)}`;
+      const getRes = await fetch(getUrl, {
+        headers: {
+          Authorization: `Bearer ${ghConfig.token}`,
+          Accept: 'application/vnd.github+json',
+        },
+      });
+
+      if (!getRes.ok) {
+        return { success: false, error: `Release ${tag} tidak ditemukan di GitHub.` };
+      }
+
+      const releaseData = await getRes.json();
+      const releaseId = releaseData.id;
+
+      // 2. Delete release
+      const delUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/${releaseId}`;
+      const delRes = await fetch(delUrl, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${ghConfig.token}`,
+          Accept: 'application/vnd.github+json',
+        },
+      });
+
+      if (!delRes.ok && delRes.status !== 204) {
+        return { success: false, error: `Gagal menghapus release ID ${releaseId} dari GitHub.` };
+      }
+
+      // 3. Delete git ref / tag
+      try {
+        await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/git/refs/tags/${encodeURIComponent(tag)}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${ghConfig.token}`,
+            Accept: 'application/vnd.github+json',
+          },
+        });
+      } catch {}
+
+      return {
+        success: true,
+        message: `Release "${tag}" berhasil dihapus dari GitHub.`,
+      };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Gagal menghapus release.' };
+    }
+  }
+
+  return {
+    success: false,
+    error: 'Penghapusan GitHub Release memerlukan runtime ALCO Hub Electron desktop atau GitHub PAT.',
+  };
 }

@@ -1728,6 +1728,242 @@ ipcMain.handle('verify-gh-release-asset', async (_event, params) => {
   }
 });
 
+// IPC: List all GitHub Releases specifically filtered for a target application
+ipcMain.handle('list-gh-app-releases', async (_event, params) => {
+  const {
+    appId,
+    appName,
+    repoOwner = 'yaladzan92-creator',
+    repoName = 'Alco-Releases',
+  } = params || {};
+
+  const repoSlug = `${repoOwner}/${repoName}`;
+  if (!appId) {
+    return { success: false, error: 'App ID diperlukan.' };
+  }
+
+  const cleanAppId = (appId || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  const appSlugKeywords = cleanAppId
+    .split('-')
+    .filter((w) => w.length > 2 && w !== 'alco' && w !== 'app');
+
+  const isReleaseForApp = (tagName, releaseTitle) => {
+    const rTag = (tagName || '').toLowerCase();
+    const rTitle = (releaseTitle || '').toLowerCase();
+
+    // 1. Exact match with cleanAppId or with "alco-" prefix
+    if (rTag.includes(cleanAppId) || rTitle.includes(cleanAppId)) return true;
+
+    // 2. Typo tolerant check for specific apps
+    if (cleanAppId.includes('creative') && (rTag.includes('creative') || rTitle.includes('creative'))) return true;
+    if (cleanAppId.includes('audio') && (rTag.includes('audio') || rTitle.includes('audio'))) return true;
+    if (cleanAppId.includes('content') && (rTag.includes('content') || rTitle.includes('content'))) return true;
+    if (cleanAppId.includes('render') && (rTag.includes('render') || rTitle.includes('render'))) return true;
+    if (cleanAppId.includes('palette') && (rTag.includes('palette') || rTitle.includes('palette'))) return true;
+
+    // 3. Check combined words
+    if (appSlugKeywords.length > 0) {
+      const matchCount = appSlugKeywords.filter((kw) => rTag.includes(kw) || rTitle.includes(kw)).length;
+      if (matchCount >= Math.min(2, appSlugKeywords.length)) return true;
+    }
+
+    return false;
+  };
+
+  // 1. Attempt via GitHub CLI
+  try {
+    const listRes = await execGhCommand([
+      'release',
+      'list',
+      '--repo',
+      repoSlug,
+      '--limit',
+      '100',
+      '--json',
+      'tagName,name,isLatest,isDraft,isPrerelease,createdAt,publishedAt',
+    ]);
+
+    if (listRes.code === 0 && listRes.stdout) {
+      const rawReleases = JSON.parse(listRes.stdout);
+      const appReleases = [];
+
+      for (const rel of rawReleases) {
+        if (isReleaseForApp(rel.tagName, rel.name)) {
+          let assets = [];
+          let htmlUrl = `https://github.com/${repoSlug}/releases/tag/${encodeURIComponent(rel.tagName)}`;
+          let body = '';
+
+          const viewRes = await execGhCommand([
+            'release',
+            'view',
+            rel.tagName,
+            '--repo',
+            repoSlug,
+            '--json',
+            'tagName,name,url,assets,body',
+          ]);
+
+          if (viewRes.code === 0 && viewRes.stdout) {
+            try {
+              const viewData = JSON.parse(viewRes.stdout);
+              if (viewData.url) htmlUrl = viewData.url;
+              if (Array.isArray(viewData.assets)) assets = viewData.assets;
+              if (viewData.body) body = viewData.body;
+            } catch {}
+          }
+
+          const exeAsset = assets.find((a) => a.name?.toLowerCase().endsWith('.exe')) || assets[0];
+          const verMatch = (rel.tagName || '').match(/v?([0-9]+(\.[0-9]+)*)/i) || (rel.name || '').match(/v?([0-9]+(\.[0-9]+)*)/i);
+          const version = verMatch ? verMatch[1] : rel.tagName.replace(/^[a-z_-]+/i, '');
+
+          let dlUrl = exeAsset ? (exeAsset.browser_download_url || exeAsset.url) : '';
+          if (dlUrl && !dlUrl.includes('/releases/download/')) {
+            dlUrl = `https://github.com/${repoSlug}/releases/download/${encodeURIComponent(rel.tagName)}/${encodeURIComponent(exeAsset.name)}`;
+          }
+
+          appReleases.push({
+            tagName: rel.tagName,
+            name: rel.name || rel.tagName,
+            version: version || '1.0.0',
+            publishedAt: rel.publishedAt || rel.createdAt || null,
+            createdAt: rel.createdAt || null,
+            isLatest: Boolean(rel.isLatest),
+            isDraft: Boolean(rel.isDraft),
+            isPrerelease: Boolean(rel.isPrerelease),
+            htmlUrl,
+            assetFilename: exeAsset?.name || null,
+            downloadUrl: dlUrl || null,
+            size: exeAsset?.size || 0,
+            body,
+          });
+        }
+      }
+
+      appReleases.sort((a, b) => {
+        const timeA = new Date(a.publishedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.publishedAt || b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+
+      const formatted = appReleases.map((item, index) => {
+        let statusBadge = 'OLD';
+        if (index === 0) statusBadge = 'LATEST';
+        else if (index === 1) statusBadge = 'PREVIOUS';
+        return {
+          ...item,
+          statusBadge,
+        };
+      });
+
+      return { success: true, releases: formatted };
+    }
+  } catch (cliErr) {
+    console.warn('[Electron] gh release list failed, trying HTTPS API fallback:', cliErr);
+  }
+
+  // 2. Fallback via HTTPS GitHub API
+  try {
+    const apiUrl = `https://api.github.com/repos/${repoSlug}/releases?per_page=100`;
+    const rawReleases = await fetchGitHubApiJson(apiUrl);
+
+    if (Array.isArray(rawReleases)) {
+      const appReleases = [];
+
+      for (const rel of rawReleases) {
+        if (isReleaseForApp(rel.tag_name, rel.name)) {
+          const assets = Array.isArray(rel.assets) ? rel.assets : [];
+          const exeAsset = assets.find((a) => a.name?.toLowerCase().endsWith('.exe')) || assets[0];
+          const verMatch = (rel.tag_name || '').match(/v?([0-9]+(\.[0-9]+)*)/i) || (rel.name || '').match(/v?([0-9]+(\.[0-9]+)*)/i);
+          const version = verMatch ? verMatch[1] : rel.tag_name.replace(/^[a-z_-]+/i, '');
+
+          appReleases.push({
+            id: rel.id,
+            tagName: rel.tag_name,
+            name: rel.name || rel.tag_name,
+            version: version || '1.0.0',
+            publishedAt: rel.published_at || rel.created_at || null,
+            createdAt: rel.created_at || null,
+            isLatest: Boolean(rel.make_latest || false),
+            isDraft: Boolean(rel.draft),
+            isPrerelease: Boolean(rel.prerelease),
+            htmlUrl: rel.html_url || `https://github.com/${repoSlug}/releases/tag/${encodeURIComponent(rel.tag_name)}`,
+            assetFilename: exeAsset?.name || null,
+            downloadUrl: exeAsset?.browser_download_url || null,
+            size: exeAsset?.size || 0,
+            body: rel.body || '',
+          });
+        }
+      }
+
+      appReleases.sort((a, b) => {
+        const timeA = new Date(a.publishedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.publishedAt || b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+
+      const formatted = appReleases.map((item, index) => {
+        let statusBadge = 'OLD';
+        if (index === 0) statusBadge = 'LATEST';
+        else if (index === 1) statusBadge = 'PREVIOUS';
+        return {
+          ...item,
+          statusBadge,
+        };
+      });
+
+      return { success: true, releases: formatted };
+    }
+  } catch (apiErr) {
+    return {
+      success: false,
+      error: `Gagal memuat riwayat rilis dari GitHub: ${apiErr instanceof Error ? apiErr.message : 'Koneksi gagal'}`,
+      releases: [],
+    };
+  }
+
+  return { success: true, releases: [] };
+});
+
+// IPC: Delete a GitHub Release (with its Git tag) via GitHub CLI
+ipcMain.handle('delete-gh-release', async (_event, params) => {
+  const {
+    tag,
+    repoOwner = 'yaladzan92-creator',
+    repoName = 'Alco-Releases',
+  } = params || {};
+
+  const repoSlug = `${repoOwner}/${repoName}`;
+  if (!tag) {
+    return { success: false, error: 'Tag release diperlukan untuk penghapusan.' };
+  }
+
+  const deleteRes = await execGhCommand([
+    'release',
+    'delete',
+    tag,
+    '--repo',
+    repoSlug,
+    '--yes',
+    '--cleanup-tag',
+  ]);
+
+  if (deleteRes.code !== 0) {
+    return {
+      success: false,
+      error: deleteRes.stderr || deleteRes.stdout || `Gagal menghapus release ${tag} dari GitHub.`,
+    };
+  }
+
+  return {
+    success: true,
+    message: `Release "${tag}" dan installer berhasil dihapus dari GitHub Releases.`,
+  };
+});
+
 app.whenReady().then(() => {
   createWindow();
 
