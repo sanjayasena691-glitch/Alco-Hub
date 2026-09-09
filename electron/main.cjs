@@ -827,12 +827,179 @@ async function resolveGitHubReleaseAsset({
   };
 }
 
+// Directory for persistent installer caching across sessions and reboots
+function getInstallerCacheDir() {
+  try {
+    const userPath = app.getPath('userData');
+    const dir = path.join(userPath, 'installer-cache');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+  } catch {
+    const tempDir = path.join(app.getPath('temp'), 'alco-hub-installer-cache');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    return tempDir;
+  }
+}
+
+/**
+ * Checks if the target desktop application is currently running.
+ * Scans only specific application executable names to prevent false matches.
+ */
+function isTargetAppRunning(appDefinition) {
+  if (process.platform !== 'win32') return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    const specificNames = (appDefinition.executableNames || []).filter(
+      (name) => name && !['electron.exe', 'alco hub.exe', 'alco-hub.exe'].includes(name.toLowerCase())
+    );
+    if (specificNames.length === 0) return resolve(false);
+
+    const tasklist = spawn('tasklist', ['/fo', 'csv', '/nh'], { windowsHide: true, shell: false });
+    let stdout = '';
+    if (tasklist.stdout) {
+      tasklist.stdout.on('data', (d) => { stdout += d.toString(); });
+    }
+    tasklist.on('close', () => {
+      const output = stdout.toLowerCase();
+      const isRunning = specificNames.some((name) => {
+        const lower = name.toLowerCase();
+        return output.includes(`"${lower}"`) || output.includes(lower);
+      });
+      resolve(isRunning);
+    });
+    tasklist.on('error', () => resolve(false));
+  });
+}
+
+/**
+ * Gracefully terminates the running target application before installer runs.
+ * Uses exact process names only to prevent unintended termination of other apps.
+ */
+function closeTargetAppProcess(appDefinition) {
+  if (process.platform !== 'win32') return Promise.resolve({ success: true, closed: true });
+
+  return new Promise((resolve) => {
+    const specificNames = (appDefinition.executableNames || []).filter(
+      (name) => name && !['electron.exe', 'alco hub.exe', 'alco-hub.exe'].includes(name.toLowerCase())
+    );
+    if (specificNames.length === 0) return resolve({ success: true, closed: false });
+
+    const filterArgs = [];
+    for (const name of specificNames) {
+      filterArgs.push('/im', name);
+    }
+
+    const taskkill = spawn('taskkill', ['/f', ...filterArgs], { windowsHide: true, shell: false });
+    taskkill.on('close', () => {
+      // Allow Windows filesystem handles to release
+      setTimeout(async () => {
+        const stillRunning = await isTargetAppRunning(appDefinition);
+        if (stillRunning) {
+          setTimeout(async () => {
+            const finalCheck = await isTargetAppRunning(appDefinition);
+            resolve({ success: !finalCheck, stillRunning: finalCheck, closed: !finalCheck });
+          }, 500);
+        } else {
+          resolve({ success: true, stillRunning: false, closed: true });
+        }
+      }, 400);
+    });
+    taskkill.on('error', (err) => resolve({ success: false, error: err.message }));
+  });
+}
+
+// IPC: Check if an app is currently running
+ipcMain.handle('check-app-running', async (_event, appId) => {
+  const appDefinition = getAppDefinition(appId);
+  const isRunning = await isTargetAppRunning(appDefinition);
+  return { isRunning, appName: appDefinition.label };
+});
+
+// IPC: Close running app process safely
+ipcMain.handle('close-app-process', async (_event, appId) => {
+  const appDefinition = getAppDefinition(appId);
+  return closeTargetAppProcess(appDefinition);
+});
+
+// IPC: Check local installer cache
+ipcMain.handle('get-installer-cache-info', async (_event, params) => {
+  const { appId, version, sha256 } = params || {};
+  if (!appId) return { cached: false };
+
+  const cacheDir = getInstallerCacheDir();
+  const canonicalId = (appId || '').toLowerCase().trim();
+  const sanitizedAppId = canonicalId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const cleanVersion = (version || '').trim().replace(/^v/i, '');
+
+  const candidates = [
+    path.join(cacheDir, `${sanitizedAppId}-${cleanVersion}.exe`),
+    path.join(cacheDir, `${sanitizedAppId}-v${cleanVersion}.exe`),
+  ];
+
+  for (const candidatePath of candidates) {
+    if (fs.existsSync(candidatePath)) {
+      try {
+        const hash = await calculateFileSha256(candidatePath);
+        const stats = fs.statSync(candidatePath);
+        if (sha256) {
+          const expected = sha256.trim().toLowerCase();
+          if (hash.toLowerCase() === expected) {
+            return {
+              cached: true,
+              installerPath: candidatePath,
+              sha256: hash,
+              isValid: true,
+              fileSize: stats.size,
+            };
+          } else {
+            // Checksum mismatch -> invalidate and remove corrupted cache
+            try { fs.unlinkSync(candidatePath); } catch {}
+            return { cached: false, isValid: false, reason: 'sha_mismatch' };
+          }
+        }
+        return {
+          cached: true,
+          installerPath: candidatePath,
+          sha256: hash,
+          isValid: true,
+          fileSize: stats.size,
+        };
+      } catch {}
+    }
+  }
+  return { cached: false };
+});
+
+// IPC: Clear installer cache
+ipcMain.handle('clear-installer-cache', async (_event, appId) => {
+  const cacheDir = getInstallerCacheDir();
+  let deletedCount = 0;
+  if (!fs.existsSync(cacheDir)) return { success: true, deletedCount: 0 };
+
+  const files = fs.readdirSync(cacheDir);
+  const canonicalId = appId ? (appId || '').toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_') : '';
+
+  for (const file of files) {
+    if (!canonicalId || file.toLowerCase().includes(canonicalId.toLowerCase())) {
+      try {
+        fs.unlinkSync(path.join(cacheDir, file));
+        deletedCount++;
+      } catch {}
+    }
+  }
+  return { success: true, deletedCount };
+});
+
 // Set untuk mencegah eksekusi installer ganda secara bersamaan untuk aplikasi yang sama
 const activeInstallations = new Set();
 
-// 3. Generic installer download, SHA-256 integrity verification, and execution
+// 3. Generic installer download, SHA-256 integrity verification, reusable caching, and execution
 ipcMain.handle('download-and-install-app', async (event, params) => {
-  const { appId, downloadUrl, sha256, latestVersion, appName, releaseTag, repoOwner, repoName } = params || {};
+  const { appId, downloadUrl, sha256, latestVersion, appName, releaseTag, repoOwner, repoName, forceRedownload } = params || {};
 
   if (!appId) {
     return { success: false, error: 'App ID tidak ditemukan.' };
@@ -857,7 +1024,7 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
     };
   }
 
-  const sendProgress = (status, progress, bytesReceived = 0, totalBytes = 0, message = '', error = '') => {
+  const sendProgress = (status, progress, bytesReceived = 0, totalBytes = 0, message = '', error = '', extra = {}) => {
     try {
       event.sender.send('install-progress', {
         appId,
@@ -867,81 +1034,139 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
         totalBytes,
         message,
         error,
+        ...extra,
       });
     } catch (e) {
       console.warn('[Electron] Failed to send install-progress IPC event:', e);
     }
   };
 
-  // Phase 0: GitHub Asset Source-of-Truth Resolution & Diagnostics
-  sendProgress('downloading', 0, 0, 0, 'Memverifikasi rilis aktual di GitHub Releases...');
+  const appDefinition = getAppDefinition(appId, { name: appName });
+  const cacheDir = getInstallerCacheDir();
+  const sanitizedAppId = canonicalAppId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const cleanVersion = (latestVersion || '').trim().replace(/^v/i, '') || '1.0.0';
 
-  let actualDownloadUrl = downloadUrl;
-  let actualReleaseTag = releaseTag || '';
-  let actualAssetFilename = '';
-
-  try {
-    const resolution = await resolveGitHubReleaseAsset({
-      appId,
-      latestVersion,
-      metadataDownloadUrl: downloadUrl,
-      appName,
-      repoOwner: repoOwner || 'yaladzan92-creator',
-      repoName: repoName || 'Alco-Releases',
-    });
-
-    if (resolution.found && resolution.downloadUrl) {
-      actualDownloadUrl = resolution.downloadUrl;
-      actualReleaseTag = resolution.releaseTag;
-      actualAssetFilename = resolution.assetFilename;
-    }
-  } catch (resErr) {
-    console.warn('[Electron] Dynamic release asset resolution warning:', resErr);
-  }
-
-  // Diagnostic Log (appId, latestVersion, metadataDownloadUrl, resolvedDownloadUrl, releaseTag, assetFilename)
-  console.log('[Electron Download Diagnostic]', {
-    appId,
-    latestVersion: latestVersion || 'unknown',
-    metadataDownloadUrl: downloadUrl || 'none',
-    resolvedDownloadUrl: actualDownloadUrl || 'none',
-    releaseTag: actualReleaseTag || 'none',
-    assetFilename: actualAssetFilename || 'none',
-  });
-
-  if (!actualDownloadUrl || !isValidSecureUrl(actualDownloadUrl)) {
-    activeInstallations.delete(canonicalAppId);
-    const errorMsg = 'Installer resmi tidak ditemukan di GitHub Releases.';
-    sendProgress('failed', 0, 0, 0, '', errorMsg);
-    return { success: false, error: errorMsg };
-  }
-
-  // Setup temporary directory in user temp space
+  // Path where verified installer is permanently stored for reuse
+  const cachedInstallerPath = path.join(cacheDir, `${sanitizedAppId}-${cleanVersion}.exe`);
   const tempDir = path.join(app.getPath('temp'), 'alco-hub-downloads');
   try {
     fs.mkdirSync(tempDir, { recursive: true });
-  } catch (err) {
-    activeInstallations.delete(canonicalAppId);
-    return { success: false, error: `Gagal membuat direktori download: ${err.message}` };
-  }
-
-  const sanitizedAppId = appId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  } catch {}
   const tempDownloadPath = path.join(tempDir, `${sanitizedAppId}-${Date.now()}.download.tmp`);
-  const finalInstallerPath = path.join(
-    tempDir,
-    actualAssetFilename || `${sanitizedAppId}-${latestVersion || 'setup'}.exe`
-  );
 
   try {
-    // Phase 1: Download binary stream with progress
-    sendProgress('downloading', 0, 0, 0, 'Memulai download installer resmi dari GitHub Releases...');
+    // =========================================================================
+    // STEP 1: Check Reusable Local Installer Cache
+    // =========================================================================
+    if (!forceRedownload && fs.existsSync(cachedInstallerPath)) {
+      sendProgress('verifying', 100, 0, 0, 'Memeriksa cache installer lokal yang tersedia...');
+      const cachedHash = await calculateFileSha256(cachedInstallerPath);
+
+      if (cachedHash.toLowerCase() === cleanExpectedHash) {
+        console.log(`[Electron Installer Cache] Reusing valid local installer: ${cachedInstallerPath}`);
+        sendProgress('installer-ready', 100, 0, 0, `Installer v${cleanVersion} siap dipasang (menggunakan cache lokal).`, '', {
+          fromCache: true,
+          installerPath: cachedInstallerPath,
+        });
+
+        // STEP 1b: Check & Close Running Old App Process Safely
+        const isRunning = await isTargetAppRunning(appDefinition);
+        if (isRunning) {
+          sendProgress('closing-app', 100, 0, 0, `Menutup proses ${appDefinition.label} yang sedang aktif...`);
+          await closeTargetAppProcess(appDefinition);
+        }
+
+        // STEP 1c: Launch Installer
+        sendProgress('launching-installer', 100, 0, 0, 'Membuka installer Windows Setup...');
+        try {
+          if (process.platform === 'win32') {
+            const child = spawn(cachedInstallerPath, [], {
+              detached: true,
+              stdio: 'ignore',
+            });
+            child.unref();
+          } else {
+            await shell.openPath(cachedInstallerPath);
+          }
+        } catch (spawnErr) {
+          const openErr = await shell.openPath(cachedInstallerPath);
+          if (openErr) {
+            throw new Error(`Gagal membuka installer: ${spawnErr?.message || openErr}`);
+          }
+        }
+
+        sendProgress('installer-opened', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.', '', {
+          fromCache: true,
+          installerPath: cachedInstallerPath,
+        });
+
+        return {
+          success: true,
+          fromCache: true,
+          installerPath: cachedInstallerPath,
+          message: 'Installer lokal berhasil diverifikasi dan dijalankan.',
+        };
+      } else {
+        // Corrupted/Stale Cache: Invalidate and delete
+        console.log(`[Electron Installer Cache] Checksum mismatch in cache. Deleting stale file.`);
+        try { fs.unlinkSync(cachedInstallerPath); } catch {}
+      }
+    }
+
+    // =========================================================================
+    // STEP 2: Resolve Release Asset from GitHub
+    // =========================================================================
+    sendProgress('downloading', 0, 0, 0, 'Memverifikasi rilis aktual di GitHub Releases...');
+
+    let actualDownloadUrl = downloadUrl;
+    let actualReleaseTag = releaseTag || '';
+    let actualAssetFilename = '';
+
+    try {
+      const resolution = await resolveGitHubReleaseAsset({
+        appId,
+        latestVersion,
+        metadataDownloadUrl: downloadUrl,
+        appName,
+        repoOwner: repoOwner || 'yaladzan92-creator',
+        repoName: repoName || 'Alco-Releases',
+      });
+
+      if (resolution.found && resolution.downloadUrl) {
+        actualDownloadUrl = resolution.downloadUrl;
+        actualReleaseTag = resolution.releaseTag;
+        actualAssetFilename = resolution.assetFilename;
+      }
+    } catch (resErr) {
+      console.warn('[Electron] Dynamic release asset resolution warning:', resErr);
+    }
+
+    console.log('[Electron Download Diagnostic]', {
+      appId,
+      latestVersion: latestVersion || 'unknown',
+      metadataDownloadUrl: downloadUrl || 'none',
+      resolvedDownloadUrl: actualDownloadUrl || 'none',
+      releaseTag: actualReleaseTag || 'none',
+      assetFilename: actualAssetFilename || 'none',
+    });
+
+    if (!actualDownloadUrl || !isValidSecureUrl(actualDownloadUrl)) {
+      activeInstallations.delete(canonicalAppId);
+      const errorMsg = 'Installer resmi tidak ditemukan di GitHub Releases.';
+      sendProgress('failed', 0, 0, 0, '', errorMsg);
+      return { success: false, error: errorMsg };
+    }
+
+    // =========================================================================
+    // STEP 3: Download Binary Stream with Progress
+    // =========================================================================
+    sendProgress('downloading', 0, 0, 0, 'Mengunduh installer resmi dari GitHub Releases...');
 
     try {
       await downloadFileWithProgress(actualDownloadUrl, tempDownloadPath, ({ bytesReceived, totalBytes, progress }) => {
         sendProgress('downloading', progress, bytesReceived, totalBytes, `Mengunduh installer (${progress}%)...`);
       });
     } catch (downloadErr) {
-      // Jika URL pertama 404 dan belum di-resolve dari GitHub API, coba fallback resolution
       if (
         downloadErr &&
         (downloadErr.message?.includes('404') || downloadErr.message?.includes('Status 404')) &&
@@ -962,12 +1187,6 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
           actualReleaseTag = fallbackRes.releaseTag;
           actualAssetFilename = fallbackRes.assetFilename;
 
-          console.log('[Electron Download Fallback Retry]', {
-            appId,
-            resolvedDownloadUrl: actualDownloadUrl,
-            releaseTag: actualReleaseTag,
-          });
-
           await downloadFileWithProgress(actualDownloadUrl, tempDownloadPath, ({ bytesReceived, totalBytes, progress }) => {
             sendProgress('downloading', progress, bytesReceived, totalBytes, `Mengunduh installer (${progress}%)...`);
           });
@@ -982,7 +1201,9 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
       }
     }
 
-    // Phase 2: SHA-256 Integrity Verification
+    // =========================================================================
+    // STEP 4: SHA-256 Integrity Verification
+    // =========================================================================
     sendProgress('verifying', 100, 0, 0, 'Memverifikasi checksum SHA-256 binary installer...');
 
     const computedHash = await calculateFileSha256(tempDownloadPath);
@@ -1002,41 +1223,62 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
       };
     }
 
-    // Phase 3: Finalize installer file path
+    // =========================================================================
+    // STEP 5: Store in Persistent Installer Cache
+    // =========================================================================
     try {
-      if (fs.existsSync(finalInstallerPath)) fs.unlinkSync(finalInstallerPath);
-      fs.renameSync(tempDownloadPath, finalInstallerPath);
+      if (fs.existsSync(cachedInstallerPath)) fs.unlinkSync(cachedInstallerPath);
+      fs.renameSync(tempDownloadPath, cachedInstallerPath);
     } catch {
-      fs.copyFileSync(tempDownloadPath, finalInstallerPath);
-      try {
-        fs.unlinkSync(tempDownloadPath);
-      } catch {}
+      fs.copyFileSync(tempDownloadPath, cachedInstallerPath);
+      try { fs.unlinkSync(tempDownloadPath); } catch {}
     }
 
-    // Phase 4: Execute installer via detached process
+    sendProgress('installer-ready', 100, 0, 0, `Installer v${cleanVersion} berhasil diverifikasi dan disimpan ke cache.`, '', {
+      fromCache: true,
+      installerPath: cachedInstallerPath,
+    });
+
+    // =========================================================================
+    // STEP 6: Check & Close Running Old App Process Safely
+    // =========================================================================
+    const isRunning = await isTargetAppRunning(appDefinition);
+    if (isRunning) {
+      sendProgress('closing-app', 100, 0, 0, `Menutup proses ${appDefinition.label} yang sedang aktif...`);
+      await closeTargetAppProcess(appDefinition);
+    }
+
+    // =========================================================================
+    // STEP 7: Launch Installer
+    // =========================================================================
     sendProgress('launching-installer', 100, 0, 0, 'Membuka installer Windows Setup...');
 
     try {
       if (process.platform === 'win32') {
-        const child = spawn(finalInstallerPath, [], {
+        const child = spawn(cachedInstallerPath, [], {
           detached: true,
           stdio: 'ignore',
         });
         child.unref();
       } else {
-        await shell.openPath(finalInstallerPath);
+        await shell.openPath(cachedInstallerPath);
       }
     } catch (spawnErr) {
-      const openErr = await shell.openPath(finalInstallerPath);
+      const openErr = await shell.openPath(cachedInstallerPath);
       if (openErr) {
         throw new Error(`Gagal membuka installer: ${spawnErr?.message || openErr}`);
       }
     }
 
-    sendProgress('installer-opened', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.');
+    sendProgress('installer-opened', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.', '', {
+      fromCache: true,
+      installerPath: cachedInstallerPath,
+    });
 
     return {
       success: true,
+      fromCache: false,
+      installerPath: cachedInstallerPath,
       message: 'Installer berhasil diunduh, diverifikasi, dan dijalankan.',
       resolvedDownloadUrl: actualDownloadUrl,
       releaseTag: actualReleaseTag,
@@ -1052,7 +1294,10 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
       ? 'Installer resmi tidak ditemukan di GitHub Releases.'
       : rawMessage;
 
-    sendProgress('failed', 0, 0, 0, '', finalErrorMessage);
+    // Notice: We do NOT delete cachedInstallerPath if it already exists and was verified!
+    sendProgress('failed', 0, 0, 0, '', finalErrorMessage, {
+      installerPath: fs.existsSync(cachedInstallerPath) ? cachedInstallerPath : undefined,
+    });
     return { success: false, error: finalErrorMessage };
   } finally {
     activeInstallations.delete(canonicalAppId);

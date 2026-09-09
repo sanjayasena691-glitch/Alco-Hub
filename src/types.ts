@@ -248,13 +248,28 @@ export type InstallStatus =
   | 'idle'
   | 'downloading'
   | 'verifying'
+  | 'installer-ready'
+  | 'app-running'
+  | 'closing-app'
   | 'launching-installer'
   | 'installer-opened'
   | 'ready-to-install'
   | 'installing'
   | 'waiting-completion'
   | 'installed'
+  | 'installation-failed'
   | 'failed';
+
+export interface LocalInstallerCacheInfo {
+  appId: string;
+  version: string;
+  installerPath: string;
+  sha256: string;
+  downloadUrl?: string;
+  verifiedAt: string;
+  fileSize?: number;
+  isValid: boolean;
+}
 
 export interface AppInstallProgress {
   appId: string;
@@ -264,6 +279,8 @@ export interface AppInstallProgress {
   totalBytes: number;
   message?: string;
   error?: string;
+  fromCache?: boolean;
+  installerPath?: string;
 }
 
 export interface AppLocalInstallation {
@@ -283,6 +300,8 @@ export interface InstallResult {
   releaseTag?: string;
   assetFilename?: string;
   shaMismatch?: boolean;
+  fromCache?: boolean;
+  installerPath?: string;
 }
 
 export type ReleaseBadgeStatus = 'LATEST' | 'PREVIOUS' | 'OLD';
@@ -341,7 +360,19 @@ declare global {
         releaseTag?: string;
         repoOwner?: string;
         repoName?: string;
+        forceRedownload?: boolean;
       }) => Promise<InstallResult>;
+      checkAppRunning?: (appId: string) => Promise<{ isRunning: boolean; appName?: string; error?: string }>;
+      closeAppProcess?: (appId: string) => Promise<{ success: boolean; stillRunning?: boolean; error?: string }>;
+      getInstallerCacheInfo?: (params: { appId: string; version: string; sha256?: string }) => Promise<{
+        cached: boolean;
+        installerPath?: string;
+        sha256?: string;
+        isValid?: boolean;
+        fileSize?: number;
+        reason?: string;
+      }>;
+      clearInstallerCache?: (appId?: string) => Promise<{ success: boolean; deletedCount?: number }>;
       onInstallProgress: (callback: (data: AppInstallProgress) => void) => () => void;
       selectInstallerFile?: () => Promise<NativeFileSelection>;
       calculateFileHash?: (filePath: string) => Promise<{ success: boolean; sha256?: string; error?: string }>;

@@ -172,11 +172,15 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   // Live installer progress states
   const isDownloading = installProgress?.status === 'downloading';
   const isVerifying = installProgress?.status === 'verifying';
+  const isInstallerReady = installProgress?.status === 'installer-ready';
+  const isAppRunning = installProgress?.status === 'app-running';
+  const isClosingApp = installProgress?.status === 'closing-app';
   const isLaunching = installProgress?.status === 'launching-installer';
   const isInstallerOpened = installProgress?.status === 'installer-opened';
   const isWaitingCompletion = installProgress?.status === 'waiting-completion';
-  const isFailed = installProgress?.status === 'failed';
-  const isBusy = isDownloading || isVerifying || isLaunching;
+  const isFailed = installProgress?.status === 'failed' || installProgress?.status === 'installation-failed';
+  const isBusy = isDownloading || isVerifying || isInstallerReady || isAppRunning || isClosingApp || isLaunching;
+  const hasCachedInstaller = Boolean(installProgress?.fromCache || installProgress?.installerPath);
 
   const hasUpdate =
     isInstalled &&
@@ -283,6 +287,22 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 <FileCheck2 className="w-3 h-3 text-purple-600 dark:text-purple-400 shrink-0" />
                 <span>Verifying SHA-256</span>
               </span>
+            ) : isInstallerReady ? (
+              <span
+                id={`app-status-badge-ready-${app.id}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30 shadow-xs"
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>Installer Ready (Cache)</span>
+              </span>
+            ) : isClosingApp || isAppRunning ? (
+              <span
+                id={`app-status-badge-closing-${app.id}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30"
+              >
+                <RefreshCw className="w-3 h-3 text-amber-600 dark:text-amber-400 animate-spin shrink-0" />
+                <span>Menutup App Aktif...</span>
+              </span>
             ) : isLaunching ? (
               <span
                 id={`app-status-badge-launching-${app.id}`}
@@ -313,7 +333,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-50 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30"
               >
                 <AlertCircle className="w-3 h-3 text-rose-600 dark:text-rose-400 shrink-0" />
-                <span>Failed</span>
+                <span>Gagal Pasang</span>
               </span>
             ) : isInstalled ? (
               <span
@@ -418,6 +438,26 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
           </div>
         )}
 
+        {isInstallerReady && (
+          <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-500/30 space-y-1 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <div>
+              <p className="font-bold text-slate-900 dark:text-white">Installer Siap (Cache Terverifikasi)</p>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-300">Menggunakan file installer lokal yang sudah terunduh dan lolos uji SHA-256.</p>
+            </div>
+          </div>
+        )}
+
+        {(isClosingApp || isAppRunning) && (
+          <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-500/30 space-y-1 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2.5">
+            <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-spin shrink-0" />
+            <div>
+              <p className="font-bold text-slate-900 dark:text-white">Menutup Aplikasi Lama...</p>
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">Menutup proses aplikasi target agar update file berjalan lancar.</p>
+            </div>
+          </div>
+        )}
+
         {isLaunching && (
           <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-500/30 space-y-1 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2.5">
             <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-spin shrink-0" />
@@ -482,16 +522,21 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
         )}
 
         {isFailed && (
-          <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30 space-y-1 text-xs text-rose-800 dark:text-rose-200">
+          <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30 space-y-2 text-xs text-rose-800 dark:text-rose-200">
             <div className="flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-rose-900 dark:text-rose-100">Gagal Memasang Installer</p>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-rose-900 dark:text-rose-100">Instalasi Belum Selesai</p>
                 <p className="text-[11px] text-rose-700 dark:text-rose-300/90 leading-relaxed mt-0.5">
-                  {installProgress?.error || 'Verifikasi SHA-256 gagal atau koneksi terputus.'}
+                  {installProgress?.error || 'Proses instalasi belum tuntas atau dibatalkan.'}
                 </p>
               </div>
             </div>
+            {hasCachedInstaller && (
+              <p className="text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">
+                ✓ Installer valid tersimpan di cache lokal. Anda dapat mencoba pasang ulang tanpa download ulang.
+              </p>
+            )}
           </div>
         )}
 
@@ -582,15 +627,27 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
             <span>Check Again</span>
           </button>
         ) : isFailed ? (
-          <button
-            id={`app-btn-retry-${app.id}`}
-            type="button"
-            onClick={() => onInstallApp && onInstallApp(app)}
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Coba Install Lagi</span>
-          </button>
+          <div className="w-full flex items-center gap-2">
+            <button
+              id={`app-btn-retry-${app.id}`}
+              type="button"
+              onClick={() => onInstallApp && onInstallApp(app)}
+              className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>{hasCachedInstaller ? 'Pasang Ulang (Cache)' : 'Coba Lagi'}</span>
+            </button>
+            {onCheckInstalled && (
+              <button
+                id={`app-btn-check-failed-${app.id}`}
+                type="button"
+                onClick={() => onCheckInstalled(app.appId || app.id)}
+                className="px-3 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold transition-all border border-slate-200 dark:border-slate-700 cursor-pointer shrink-0"
+              >
+                <span>Cek Status</span>
+              </button>
+            )}
+          </div>
         ) : app.downloadUrl && app.sha256 ? (
           <button
             id={`app-btn-install-${app.id}`}

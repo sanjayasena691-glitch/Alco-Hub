@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('alcoHub', {
   checkAppInstalled: (appId) => ipcRenderer.invoke('check-app-installed', appId),
   checkAllAppsInstalled: () => ipcRenderer.invoke('check-all-apps-installed'),
   downloadAndInstallApp: (params) => ipcRenderer.invoke('download-and-install-app', params),
+  checkAppRunning: (appId) => ipcRenderer.invoke('check-app-running', appId),
+  closeAppProcess: (appId) => ipcRenderer.invoke('close-app-process', appId),
+  getInstallerCacheInfo: (params) => ipcRenderer.invoke('get-installer-cache-info', params),
+  clearInstallerCache: (appId) => ipcRenderer.invoke('clear-installer-cache', appId),
   onInstallProgress: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, data) => callback(data);

@@ -1,10 +1,11 @@
 /**
  * ALCO Hub - Installer & Desktop Application Service
  * Menjembatani komunikasi React UI dengan Electron IPC Main Process untuk
- * download installer GitHub Releases, verifikasi SHA-256, eksekusi installer, dan deteksi status installed.
+ * download installer GitHub Releases, verifikasi SHA-256, reusable installer caching,
+ * deteksi proses aktif, eksekusi installer, dan deteksi status installed.
  */
 
-import { EcosystemApp, AppLocalInstallation, AppInstallProgress, InstallResult } from '../types';
+import { EcosystemApp, AppLocalInstallation, AppInstallProgress, InstallResult, LocalInstallerCacheInfo } from '../types';
 import { fetchFreshAppMetadata, updateCachedAppDownloadUrl } from './storeService';
 
 /**
@@ -42,6 +43,67 @@ export async function checkAllAppsInstallation(): Promise<Record<string, AppLoca
   return {};
 }
 
+/**
+ * Memeriksa ketersediaan installer yang sudah diunduh dan diverifikasi di cache lokal.
+ */
+export async function checkInstallerCache(
+  appId: string,
+  version: string,
+  sha256?: string
+): Promise<{ cached: boolean; installerPath?: string; isValid?: boolean; fileSize?: number }> {
+  const canonicalId = (appId || '').toLowerCase().trim();
+  if (window.alcoHub && typeof window.alcoHub.getInstallerCacheInfo === 'function') {
+    try {
+      const res = await window.alcoHub.getInstallerCacheInfo({
+        appId: canonicalId,
+        version,
+        sha256,
+      });
+      return res || { cached: false };
+    } catch (err) {
+      console.warn(`[ALCO Hub] checkInstallerCache error for ${canonicalId}:`, err);
+      return { cached: false };
+    }
+  }
+  return { cached: false };
+}
+
+/**
+ * Memeriksa apakah proses aplikasi target sedang berjalan di komputer.
+ */
+export async function checkTargetAppRunning(
+  appId: string
+): Promise<{ isRunning: boolean; appName?: string }> {
+  const canonicalId = (appId || '').toLowerCase().trim();
+  if (window.alcoHub && typeof window.alcoHub.checkAppRunning === 'function') {
+    try {
+      const res = await window.alcoHub.checkAppRunning(canonicalId);
+      return res || { isRunning: false };
+    } catch {
+      return { isRunning: false };
+    }
+  }
+  return { isRunning: false };
+}
+
+/**
+ * Menutup proses aplikasi target secara aman sebelum instalasi/update.
+ */
+export async function closeTargetApp(
+  appId: string
+): Promise<{ success: boolean; stillRunning?: boolean; error?: string }> {
+  const canonicalId = (appId || '').toLowerCase().trim();
+  if (window.alcoHub && typeof window.alcoHub.closeAppProcess === 'function') {
+    try {
+      const res = await window.alcoHub.closeAppProcess(canonicalId);
+      return res || { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message };
+    }
+  }
+  return { success: true };
+}
+
 // Track in-flight installation attempts to prevent redundant duplicate calls
 const inFlightInstalls = new Set<string>();
 
@@ -49,17 +111,23 @@ export function isAppInstalling(appId: string): boolean {
   return inFlightInstalls.has((appId || '').toLowerCase().trim());
 }
 
+export interface StartInstallOptions {
+  forceRedownload?: boolean;
+}
+
 /**
  * Memulai alur instalasi resmi untuk sebuah aplikasi ALCO:
- * 1. Validasi URL HTTPS & SHA-256 Checksum
- * 2. Mengirim request ke Electron Main Process via IPC
- * 3. Electron mengunduh binary ke temp directory
- * 4. Electron menghitung & memverifikasi SHA-256
- * 5. Jika cocok, Electron mengeksekusi installer Windows
+ * 1. Memeriksa keberadaan installer di cache lokal (jika valid, skip download)
+ * 2. Jika belum ada, download binary stream dengan progress bar
+ * 3. Verifikasi SHA-256 binary installer
+ * 4. Simpan ke reusable cache lokal
+ * 5. Deteksi & tutup aplikasi lama yang sedang aktif secara aman
+ * 6. Jalankan installer Windows Setup
  */
 export async function startAppInstallation(
   app: EcosystemApp,
-  onProgress?: (progress: AppInstallProgress) => void
+  onProgress?: (progress: AppInstallProgress) => void,
+  options: StartInstallOptions = {}
 ): Promise<InstallResult> {
   const appId = app.appId || app.id;
   const canonicalId = (appId || '').toLowerCase().trim();
@@ -72,7 +140,6 @@ export async function startAppInstallation(
   inFlightInstalls.add(canonicalId);
 
   // 1. Audit Cache: Ambil metadata cloud terbaru untuk aplikasi ini langsung dari Supabase
-  // (bypassing 5-minute cache throttle) agar tidak memakai data stale
   let freshApp: EcosystemApp | null = null;
   try {
     freshApp = await fetchFreshAppMetadata(appId);
@@ -135,10 +202,10 @@ export async function startAppInstallation(
       sha256,
       latestVersion,
       appName: activeApp.name,
+      forceRedownload: options.forceRedownload,
     });
 
-    // 2. Jika Electron berhasil meresolve actual download URL dari GitHub Releases:
-    // Perbarui local cache agar tidak mempertahankan URL lama
+    // Perbarui local cache jika Electron meresolve URL download yang lebih akurat
     if (result.resolvedDownloadUrl && result.resolvedDownloadUrl !== downloadUrl) {
       updateCachedAppDownloadUrl(appId, result.resolvedDownloadUrl, latestVersion, sha256);
     }
@@ -146,11 +213,13 @@ export async function startAppInstallation(
     if (!result.success && result.error && onProgress) {
       onProgress({
         appId,
-        status: 'failed',
+        status: 'installation-failed',
         progress: 0,
         bytesReceived: 0,
         totalBytes: 0,
         error: result.error,
+        fromCache: result.fromCache,
+        installerPath: result.installerPath,
       });
     }
 
@@ -160,7 +229,7 @@ export async function startAppInstallation(
     if (onProgress) {
       onProgress({
         appId,
-        status: 'failed',
+        status: 'installation-failed',
         progress: 0,
         bytesReceived: 0,
         totalBytes: 0,
@@ -171,6 +240,16 @@ export async function startAppInstallation(
   } finally {
     inFlightInstalls.delete(canonicalId);
   }
+}
+
+/**
+ * Mengulang proses instalasi menggunakan installer lokal yang sudah terunduh & terverifikasi (tanpa download ulang).
+ */
+export async function retryAppInstallation(
+  app: EcosystemApp,
+  onProgress?: (progress: AppInstallProgress) => void
+): Promise<InstallResult> {
+  return startAppInstallation(app, onProgress, { forceRedownload: false });
 }
 
 /**
