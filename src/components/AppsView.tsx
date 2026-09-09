@@ -35,6 +35,7 @@ interface AppsViewProps {
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
+  onCheckInstalled?: (appId: string) => Promise<boolean> | void;
   onSyncCatalog: () => void;
   updateResult: ContentEngineUpdateResult | null;
   updateStatus: ContentEngineUpdateStatus;
@@ -49,6 +50,7 @@ export const AppsView: React.FC<AppsViewProps> = ({
   onOpenApp,
   onInstallApp,
   onUpdateApp,
+  onCheckInstalled,
   onSyncCatalog,
   updateResult,
   updateStatus,
@@ -199,6 +201,7 @@ export const AppsView: React.FC<AppsViewProps> = ({
                 onOpenApp={onOpenApp}
                 onInstallApp={onInstallApp}
                 onUpdateApp={onUpdateApp}
+                onCheckInstalled={onCheckInstalled}
                 updateResult={updateResult}
                 updateStatus={updateStatus}
               />

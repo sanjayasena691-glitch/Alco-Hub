@@ -10,6 +10,13 @@ import {
   ShieldCheck,
   Tag,
   Wand2,
+  Image as ImageIcon,
+  Target,
+  Video,
+  Package,
+  TrendingUp,
+  Layout,
+  Search,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -49,6 +56,12 @@ export const AppRegistrationForm: React.FC<AppRegistrationFormProps> = ({
   const [packId, setPackId] = useState(initialApp?.packId || packs[0]?.id || 'core-system');
   const [accent, setAccent] = useState<ProductAccent>(initialApp?.accent || 'purple');
   const [iconName, setIconName] = useState<ProductIconName>(initialApp?.iconName || 'target');
+  const [iconUrl, setIconUrl] = useState(initialApp?.iconUrl || '');
+  const [previewError, setPreviewError] = useState(false);
+
+  useEffect(() => {
+    setPreviewError(false);
+  }, [iconUrl]);
   
   // Commercial & Access Model
   const [accessModel, setAccessModel] = useState<AccessModel>(
@@ -145,6 +158,7 @@ export const AppRegistrationForm: React.FC<AppRegistrationFormProps> = ({
       packId: packId,
       accent: accent,
       iconName: iconName,
+      iconUrl: iconUrl.trim() || undefined,
       pricingType: accessModel as PricingType,
       accessModel: accessModel,
       trialDurationDays: accessModel === 'trial' ? Number(trialDurationDays) || 14 : undefined,
@@ -380,10 +394,15 @@ export const AppRegistrationForm: React.FC<AppRegistrationFormProps> = ({
         </div>
 
         {/* Section 3: Visual & Desain */}
-        <div className="space-y-3 pt-2 border-t border-slate-800">
-          <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block">
-            3. Identitas Visual (Aksen Warna & Icon)
-          </span>
+        <div className="space-y-4 pt-2 border-t border-slate-800">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block">
+              3. Identitas Visual (Icon Resmi, Aksen Warna & Simbol)
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Supabase Catalog Source of Truth
+            </span>
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
@@ -404,7 +423,7 @@ export const AppRegistrationForm: React.FC<AppRegistrationFormProps> = ({
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">Icon Simbol</label>
+              <label className="text-xs font-semibold text-slate-300">Icon Simbol (Fallback Lucide)</label>
               <select
                 value={iconName}
                 onChange={(e) => setIconName(e.target.value as ProductIconName)}
@@ -419,6 +438,76 @@ export const AppRegistrationForm: React.FC<AppRegistrationFormProps> = ({
                 <option value="search">Search (Research & Audit)</option>
                 <option value="shield">Shield (Security & Core)</option>
               </select>
+            </div>
+
+            {/* Official Icon URL input */}
+            <div className="space-y-1 sm:col-span-2">
+              <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Official Application Icon URL (PNG / SVG / WebP)</span>
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  CDN / GitHub raw / Supabase Storage URL
+                </span>
+              </label>
+              <input
+                type="url"
+                value={iconUrl}
+                onChange={(e) => setIconUrl(e.target.value)}
+                placeholder="contoh: https://raw.githubusercontent.com/.../icon.png atau https://...supabase.co/storage/v1/..."
+                className="w-full px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white font-mono"
+              />
+              <p className="text-[10px] text-slate-500">
+                Icon resmi yang akan tampil di kartu aplikasi, Store, dan Library ALCO Hub. Jika kosong atau gagal dimuat, sistem otomatis fallback ke icon simbol Lucide.
+              </p>
+            </div>
+          </div>
+
+          {/* Live Icon Preview Box */}
+          <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-700/80 flex items-center justify-center shrink-0 overflow-hidden shadow-md">
+              {iconUrl && !previewError ? (
+                <img
+                  src={iconUrl}
+                  alt="App Icon Preview"
+                  onError={() => setPreviewError(true)}
+                  className="w-full h-full object-contain p-1.5"
+                />
+              ) : (
+                <div className="text-indigo-400">
+                  {iconName === 'target' && <Target className="w-6 h-6" />}
+                  {iconName === 'sparkles' && <Sparkles className="w-6 h-6" />}
+                  {iconName === 'video' && <Video className="w-6 h-6" />}
+                  {iconName === 'package' && <Package className="w-6 h-6" />}
+                  {iconName === 'trending-up' && <TrendingUp className="w-6 h-6" />}
+                  {iconName === 'layout' && <Layout className="w-6 h-6" />}
+                  {iconName === 'search' && <Search className="w-6 h-6" />}
+                  {iconName === 'shield' && <ShieldCheck className="w-6 h-6" />}
+                </div>
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white">Pratinjau Icon Aplikasi</span>
+                {iconUrl && !previewError ? (
+                  <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+                    Official Icon Valid
+                  </span>
+                ) : iconUrl && previewError ? (
+                  <span className="text-[10px] font-semibold text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded">
+                    Gagal Dimuat (Fallback Aktif)
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded">
+                    Default Lucide Icon
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                {name || 'Nama Aplikasi'} • Aksen: <span className="capitalize text-slate-300 font-medium">{accent}</span>
+              </p>
             </div>
           </div>
         </div>

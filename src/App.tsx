@@ -138,7 +138,7 @@ export default function App() {
       }));
 
       // If installer executed or ready, trigger a background poll to detect newly installed executable
-      if (progress.status === 'ready-to-install') {
+      if (progress.status === 'ready-to-install' || progress.status === 'installer-opened') {
         const interval = setInterval(async () => {
           const info = await checkAppInstallation(progress.appId);
           if (info.isInstalled) {
@@ -146,10 +146,33 @@ export default function App() {
               ...prev,
               [progress.appId]: info,
             }));
+            setInstallProgressMap((prev) => {
+              const copy = { ...prev };
+              delete copy[progress.appId];
+              return copy;
+            });
             clearInterval(interval);
           }
-        }, 4000);
-        setTimeout(() => clearInterval(interval), 180000);
+        }, 3000);
+
+        // After 180s of waiting without executable detected, transition to waiting-completion state with Check Again button
+        setTimeout(() => {
+          clearInterval(interval);
+          setInstallProgressMap((prev) => {
+            const current = prev[progress.appId];
+            if (current && (current.status === 'installer-opened' || current.status === 'ready-to-install')) {
+              return {
+                ...prev,
+                [progress.appId]: {
+                  ...current,
+                  status: 'waiting-completion',
+                  message: 'Menunggu instalasi selesai. Silakan klik Check Again saat setup selesai.',
+                },
+              };
+            }
+            return prev;
+          });
+        }, 180000);
       }
     });
 
@@ -271,9 +294,34 @@ export default function App() {
             ...prev,
             [appId]: info,
           }));
+          setInstallProgressMap((prev) => {
+            const copy = { ...prev };
+            delete copy[appId];
+            return copy;
+          });
         }
       }, 5000);
     }
+  };
+
+  const handleCheckAppInstallation = async (appId: string): Promise<boolean> => {
+    const canonicalId = (appId || '').toLowerCase().trim();
+    const info = await checkAppInstallation(canonicalId);
+    if (info.isInstalled) {
+      setLocalInstallations((prev) => ({
+        ...prev,
+        [canonicalId]: info,
+        [appId]: info,
+      }));
+      setInstallProgressMap((prev) => {
+        const copy = { ...prev };
+        delete copy[canonicalId];
+        delete copy[appId];
+        return copy;
+      });
+      return true;
+    }
+    return false;
   };
 
   const handleOpenApp = (app: EcosystemApp) => {
@@ -390,6 +438,7 @@ export default function App() {
             onOpenApp={handleOpenApp}
             onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
+            onCheckInstalled={handleCheckAppInstallation}
             onRequestLicense={handleRequestLicense}
             onExplorePack={() => setActiveTab('packs')}
             onNavigateTab={(tab) => setActiveTab(tab)}
@@ -411,6 +460,7 @@ export default function App() {
             onOpenApp={handleOpenApp}
             onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
+            onCheckInstalled={handleCheckAppInstallation}
             onRequestLicense={handleRequestLicense}
             onSyncCatalog={() => handleCatalogSync(true)}
             updateResult={contentEngineUpdate}
@@ -427,6 +477,7 @@ export default function App() {
             onOpenApp={handleOpenApp}
             onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
+            onCheckInstalled={handleCheckAppInstallation}
             onRequestLicense={handleRequestLicense}
             onGoToStore={() => setActiveTab('store')}
             updateResult={contentEngineUpdate}

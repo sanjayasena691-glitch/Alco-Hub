@@ -69,6 +69,7 @@ function mapDbRowToApp(row: any): EcosystemApp {
     packId: row.pack_id || 'core-system',
     accent: (row.accent || 'purple') as ProductAccent,
     iconName: (row.icon_name || 'target') as ProductIconName,
+    iconUrl: row.icon_url || undefined,
     pricingType,
     accessModel: pricingType as AccessModel,
     trialDurationDays: trialDays,
@@ -113,6 +114,7 @@ function mapAppToDbRow(app: EcosystemApp): any {
     sha256: app.sha256 || null,
     accent: app.accent || 'purple',
     icon_name: app.iconName || 'target',
+    icon_url: app.iconUrl || null,
     updated_at: new Date().toISOString(),
   };
 

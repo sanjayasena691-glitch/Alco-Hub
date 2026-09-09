@@ -51,6 +51,7 @@ export interface EcosystemApp {
   packId: string;
   accent: ProductAccent;
   iconName: ProductIconName;
+  iconUrl?: string; // URL icon resmi aplikasi (SVG / PNG / WebP / HTTPS) dari Supabase / CDN
   
   // Distribution & Commercial Model
   pricingType: PricingType;
@@ -274,8 +275,11 @@ export type InstallStatus =
   | 'idle'
   | 'downloading'
   | 'verifying'
+  | 'launching-installer'
+  | 'installer-opened'
   | 'ready-to-install'
   | 'installing'
+  | 'waiting-completion'
   | 'installed'
   | 'failed';
 

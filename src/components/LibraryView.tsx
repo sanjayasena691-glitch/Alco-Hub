@@ -26,6 +26,7 @@ interface LibraryViewProps {
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
+  onCheckInstalled?: (appId: string) => Promise<boolean> | void;
   onGoToStore: () => void;
   updateResult: ContentEngineUpdateResult | null;
   updateStatus: ContentEngineUpdateStatus;
@@ -38,6 +39,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onOpenApp,
   onInstallApp,
   onUpdateApp,
+  onCheckInstalled,
   onGoToStore,
   updateResult,
   updateStatus,
@@ -88,6 +90,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   onOpenApp={onOpenApp}
                   onInstallApp={onInstallApp}
                   onUpdateApp={onUpdateApp}
+                  onCheckInstalled={onCheckInstalled}
                   updateResult={updateResult}
                   updateStatus={updateStatus}
                 />

@@ -25,6 +25,7 @@ import {
   Download,
   RefreshCw,
   FileCheck2,
+  ExternalLink,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -42,6 +43,7 @@ interface ApplicationCardProps {
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp?: (app: EcosystemApp) => void;
+  onCheckInstalled?: (appId: string) => Promise<boolean> | void;
   updateResult?: ContentEngineUpdateResult | null;
   updateStatus?: 'checking' | 'up-to-date' | 'update-available' | 'unable-to-check';
   featured?: boolean;
@@ -159,6 +161,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   onOpenApp,
   onInstallApp,
   onUpdateApp,
+  onCheckInstalled,
   updateResult,
   updateStatus,
   featured = false,
@@ -168,11 +171,25 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   const isFree = app.pricingType === 'free';
   const isInstalled = Boolean(installation?.isInstalled);
 
+  // Track image load error to gracefully fall back to Lucide icon
+  const [imageError, setImageError] = React.useState(false);
+
+  React.useEffect(() => {
+    setImageError(false);
+  }, [app.iconUrl]);
+
+  // Refined installer lifecycle statuses
   const isDownloading = installProgress?.status === 'downloading';
   const isVerifying = installProgress?.status === 'verifying';
-  const isInstalling = installProgress?.status === 'installing' || installProgress?.status === 'ready-to-install';
+  const isLaunching = installProgress?.status === 'launching-installer';
+  const isInstallerOpened =
+    installProgress?.status === 'installer-opened' ||
+    installProgress?.status === 'ready-to-install';
+  const isWaitingCompletion = installProgress?.status === 'waiting-completion';
   const isFailed = installProgress?.status === 'failed';
-  const isBusy = isDownloading || isVerifying || isInstalling;
+
+  // Only active background operations that lock the UI button count as "busy"
+  const isBusy = isDownloading || isVerifying || isLaunching;
 
   // Update calculation
   const hasUpdate =
@@ -232,11 +249,23 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
       <div className="space-y-4">
         {/* Top Header Row: Icon & Status / Price */}
         <div className="flex items-start justify-between gap-3">
+          {/* Official App Icon with Lucide fallback */}
           <div
             id={`app-icon-${app.id}`}
-            className={`w-11 h-11 rounded-lg border flex items-center justify-center shrink-0 ${accent.iconBg} ${accent.iconBorder} ${accent.iconText}`}
+            className={`w-11 h-11 rounded-lg border flex items-center justify-center shrink-0 overflow-hidden ${accent.iconBg} ${accent.iconBorder} ${accent.iconText}`}
           >
-            {renderIcon(app.iconName)}
+            {app.iconUrl && !imageError ? (
+              <img
+                src={app.iconUrl}
+                alt={app.name}
+                loading="lazy"
+                referrerPolicy="no-referrer"
+                onError={() => setImageError(true)}
+                className="w-full h-full object-contain p-1.5"
+              />
+            ) : (
+              renderIcon(app.iconName)
+            )}
           </div>
 
           {/* Status Badge */}
@@ -275,13 +304,29 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 <FileCheck2 className="w-3 h-3 text-purple-400 shrink-0" />
                 <span>Verifying SHA-256</span>
               </span>
-            ) : isInstalling ? (
+            ) : isLaunching ? (
               <span
-                id={`app-status-badge-installing-${app.id}`}
+                id={`app-status-badge-launching-${app.id}`}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30"
               >
                 <RefreshCw className="w-3 h-3 text-amber-400 animate-spin shrink-0" />
-                <span>Installing...</span>
+                <span>Membuka Installer...</span>
+              </span>
+            ) : isInstallerOpened ? (
+              <span
+                id={`app-status-badge-opened-${app.id}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shadow-xs"
+              >
+                <ExternalLink className="w-3 h-3 text-cyan-400 shrink-0" />
+                <span>Installer Dibuka</span>
+              </span>
+            ) : isWaitingCompletion ? (
+              <span
+                id={`app-status-badge-waiting-${app.id}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-xs"
+              >
+                <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                <span>Menunggu Instalasi</span>
               </span>
             ) : isFailed ? (
               <span
@@ -394,13 +439,66 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
           </div>
         )}
 
-        {isInstalling && (
+        {isLaunching && (
           <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-500/30 space-y-1 text-xs text-amber-200 flex items-center gap-2.5">
-            <Sparkles className="w-4 h-4 text-amber-400 animate-pulse shrink-0" />
+            <RefreshCw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
             <div>
-              <p className="font-bold text-white">Menjalankan Setup Installer...</p>
-              <p className="text-[11px] text-amber-300">Selesaikan wizard instalasi di Windows. ALCO Hub akan mendeteksi otomatis.</p>
+              <p className="font-bold text-white">Membuka Setup Installer...</p>
+              <p className="text-[11px] text-amber-300">Menjalankan wizard instalasi di Windows...</p>
             </div>
+          </div>
+        )}
+
+        {isInstallerOpened && (
+          <div className="p-3 rounded-lg bg-cyan-950/40 border border-cyan-500/30 space-y-2 text-xs text-cyan-200">
+            <div className="flex items-start gap-2.5">
+              <ExternalLink className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-white">Installer Dibuka</p>
+                <p className="text-[11px] text-cyan-300/90 leading-relaxed mt-0.5">
+                  Selesaikan instalasi melalui Windows Setup. ALCO Hub mendeteksi otomatis saat aplikasi selesai dipasang.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between pt-1 border-t border-cyan-500/20">
+              <span className="text-[10px] text-cyan-400 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                Memantau instalasi...
+              </span>
+              {onCheckInstalled && (
+                <button
+                  type="button"
+                  onClick={() => onCheckInstalled(app.appId || app.id)}
+                  className="text-[11px] font-semibold text-white underline hover:text-cyan-200 cursor-pointer"
+                >
+                  Cek Sekarang
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {isWaitingCompletion && (
+          <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-500/30 space-y-2 text-xs text-amber-200">
+            <div className="flex items-start gap-2.5">
+              <Clock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-amber-100">Menunggu instalasi selesai</p>
+                <p className="text-[11px] text-amber-300/90 leading-relaxed mt-0.5">
+                  Jika Anda sudah menyelesaikan wizard Windows Setup, klik tombol di bawah untuk mendeteksi aplikasi.
+                </p>
+              </div>
+            </div>
+            {onCheckInstalled && (
+              <button
+                type="button"
+                onClick={() => onCheckInstalled(app.appId || app.id)}
+                className="w-full py-1.5 px-3 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-[11px] font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3 text-amber-400" />
+                <span>Check Again</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -437,7 +535,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 id="app-card-direct-update-btn"
                 type="button"
                 onClick={() => onUpdateApp(app)}
-                className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-500 text-slate-950 hover:bg-amber-400 transition-colors shrink-0"
+                className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-500 text-slate-950 hover:bg-amber-400 transition-colors shrink-0 cursor-pointer"
               >
                 Lihat Update
               </button>
@@ -471,35 +569,55 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 ? `Mengunduh (${installProgress?.progress || 0}%)...`
                 : isVerifying
                   ? 'Memverifikasi SHA-256...'
-                  : 'Menjalankan Installer...'}
+                  : 'Membuka Setup Installer...'}
             </span>
-          </button>
-        ) : isFailed ? (
-          <button
-            id={`app-btn-retry-${app.id}`}
-            type="button"
-            onClick={() => onInstallApp && onInstallApp(app)}
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99]"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Coba Install Lagi</span>
           </button>
         ) : isInstalled ? (
           <button
             id={`app-btn-${app.id}`}
             type="button"
             onClick={() => onOpenApp(app)}
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-100 text-slate-950 hover:bg-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-slate-100 text-slate-950 hover:bg-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
           >
             <span>Buka {app.shortName}</span>
             <ArrowUpRight className="w-3.5 h-3.5 text-slate-600" aria-hidden="true" />
+          </button>
+        ) : isInstallerOpened ? (
+          <button
+            id={`app-btn-opened-${app.id}`}
+            type="button"
+            onClick={() => onCheckInstalled && onCheckInstalled(app.appId || app.id)}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-cyan-400 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-cyan-200" />
+            <span>Cek Status Instalasi</span>
+          </button>
+        ) : isWaitingCompletion ? (
+          <button
+            id={`app-btn-waiting-${app.id}`}
+            type="button"
+            onClick={() => onCheckInstalled && onCheckInstalled(app.appId || app.id)}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-amber-200" />
+            <span>Check Again</span>
+          </button>
+        ) : isFailed ? (
+          <button
+            id={`app-btn-retry-${app.id}`}
+            type="button"
+            onClick={() => onInstallApp && onInstallApp(app)}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Coba Install Lagi</span>
           </button>
         ) : app.downloadUrl && app.sha256 ? (
           <button
             id={`app-btn-install-${app.id}`}
             type="button"
             onClick={() => onInstallApp && onInstallApp(app)}
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Install {app.shortName} (v{app.latestVersion || app.version})</span>

@@ -42,6 +42,13 @@ export async function checkAllAppsInstallation(): Promise<Record<string, AppLoca
   return {};
 }
 
+// Track in-flight installation attempts to prevent redundant duplicate calls
+const inFlightInstalls = new Set<string>();
+
+export function isAppInstalling(appId: string): boolean {
+  return inFlightInstalls.has((appId || '').toLowerCase().trim());
+}
+
 /**
  * Memulai alur instalasi resmi untuk sebuah aplikasi ALCO:
  * 1. Validasi URL HTTPS & SHA-256 Checksum
@@ -55,6 +62,14 @@ export async function startAppInstallation(
   onProgress?: (progress: AppInstallProgress) => void
 ): Promise<InstallResult> {
   const appId = app.appId || app.id;
+  const canonicalId = (appId || '').toLowerCase().trim();
+
+  if (inFlightInstalls.has(canonicalId)) {
+    const errorMsg = 'Instalasi untuk aplikasi ini sedang diproses. Harap tunggu.';
+    return { success: false, error: errorMsg };
+  }
+
+  inFlightInstalls.add(canonicalId);
 
   // 1. Audit Cache: Ambil metadata cloud terbaru untuk aplikasi ini langsung dari Supabase
   // (bypassing 5-minute cache throttle) agar tidak memakai data stale
@@ -68,52 +83,52 @@ export async function startAppInstallation(
   const sha256 = (activeApp.sha256 || app.sha256 || '').trim();
   const latestVersion = activeApp.latestVersion || activeApp.version || app.latestVersion || app.version || '1.0.0';
 
-  if (!downloadUrl) {
-    const errorMsg = 'Download URL installer belum tersedia untuk aplikasi ini di rilis resmi.';
-    if (onProgress) {
-      onProgress({
-        appId,
-        status: 'failed',
-        progress: 0,
-        bytesReceived: 0,
-        totalBytes: 0,
-        error: errorMsg,
-      });
-    }
-    return { success: false, error: errorMsg };
-  }
-
-  if (!sha256) {
-    const errorMsg = 'SHA-256 Checksum resmi belum dikonfigurasi di katalog Supabase untuk memverifikasi keamanan file ini.';
-    if (onProgress) {
-      onProgress({
-        appId,
-        status: 'failed',
-        progress: 0,
-        bytesReceived: 0,
-        totalBytes: 0,
-        error: errorMsg,
-      });
-    }
-    return { success: false, error: errorMsg };
-  }
-
-  if (!window.alcoHub?.downloadAndInstallApp) {
-    const errorMsg = 'Instalasi desktop memerlukan runtime ALCO Hub Electron di Windows. Buka aplikasi via executable ALCO Hub.';
-    if (onProgress) {
-      onProgress({
-        appId,
-        status: 'failed',
-        progress: 0,
-        bytesReceived: 0,
-        totalBytes: 0,
-        error: errorMsg,
-      });
-    }
-    return { success: false, error: errorMsg };
-  }
-
   try {
+    if (!downloadUrl) {
+      const errorMsg = 'Download URL installer belum tersedia untuk aplikasi ini di rilis resmi.';
+      if (onProgress) {
+        onProgress({
+          appId,
+          status: 'failed',
+          progress: 0,
+          bytesReceived: 0,
+          totalBytes: 0,
+          error: errorMsg,
+        });
+      }
+      return { success: false, error: errorMsg };
+    }
+
+    if (!sha256) {
+      const errorMsg = 'SHA-256 Checksum resmi belum dikonfigurasi di katalog Supabase untuk memverifikasi keamanan file ini.';
+      if (onProgress) {
+        onProgress({
+          appId,
+          status: 'failed',
+          progress: 0,
+          bytesReceived: 0,
+          totalBytes: 0,
+          error: errorMsg,
+        });
+      }
+      return { success: false, error: errorMsg };
+    }
+
+    if (!window.alcoHub?.downloadAndInstallApp) {
+      const errorMsg = 'Instalasi desktop memerlukan runtime ALCO Hub Electron di Windows. Buka aplikasi via executable ALCO Hub.';
+      if (onProgress) {
+        onProgress({
+          appId,
+          status: 'failed',
+          progress: 0,
+          bytesReceived: 0,
+          totalBytes: 0,
+          error: errorMsg,
+        });
+      }
+      return { success: false, error: errorMsg };
+    }
+
     const result = await window.alcoHub.downloadAndInstallApp({
       appId,
       downloadUrl,
@@ -153,6 +168,8 @@ export async function startAppInstallation(
       });
     }
     return { success: false, error: errorMsg };
+  } finally {
+    inFlightInstalls.delete(canonicalId);
   }
 }
 

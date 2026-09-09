@@ -866,6 +866,9 @@ async function resolveGitHubReleaseAsset({
   };
 }
 
+// Set untuk mencegah eksekusi installer ganda secara bersamaan untuk aplikasi yang sama
+const activeInstallations = new Set();
+
 // 3. Generic installer download, SHA-256 integrity verification, and execution
 ipcMain.handle('download-and-install-app', async (event, params) => {
   const { appId, downloadUrl, sha256, latestVersion, appName, releaseTag, repoOwner, repoName } = params || {};
@@ -874,8 +877,19 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
     return { success: false, error: 'App ID tidak ditemukan.' };
   }
 
+  const canonicalAppId = (appId || '').toLowerCase().trim();
+  if (activeInstallations.has(canonicalAppId)) {
+    return {
+      success: false,
+      error: `Proses instalasi untuk ${appName || canonicalAppId} sedang berjalan. Harap tunggu hingga installer selesai dibuka.`,
+    };
+  }
+
+  activeInstallations.add(canonicalAppId);
+
   const cleanExpectedHash = (sha256 || '').trim().toLowerCase();
   if (!cleanExpectedHash || cleanExpectedHash.length !== 64) {
+    activeInstallations.delete(canonicalAppId);
     return {
       success: false,
       error: 'SHA-256 Checksum resmi tidak ditemukan atau tidak valid (harus 64 karakter hex).',
@@ -935,6 +949,7 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
   });
 
   if (!actualDownloadUrl || !isValidSecureUrl(actualDownloadUrl)) {
+    activeInstallations.delete(canonicalAppId);
     const errorMsg = 'Installer resmi tidak ditemukan di GitHub Releases.';
     sendProgress('failed', 0, 0, 0, '', errorMsg);
     return { success: false, error: errorMsg };
@@ -945,6 +960,7 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
   try {
     fs.mkdirSync(tempDir, { recursive: true });
   } catch (err) {
+    activeInstallations.delete(canonicalAppId);
     return { success: false, error: `Gagal membuat direktori download: ${err.message}` };
   }
 
@@ -1037,7 +1053,7 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
     }
 
     // Phase 4: Execute installer via detached process
-    sendProgress('installing', 100, 0, 0, 'Menjalankan installer di Windows...');
+    sendProgress('launching-installer', 100, 0, 0, 'Membuka installer Windows Setup...');
 
     try {
       if (process.platform === 'win32') {
@@ -1056,7 +1072,7 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
       }
     }
 
-    sendProgress('ready-to-install', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.');
+    sendProgress('installer-opened', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.');
 
     return {
       success: true,
@@ -1077,6 +1093,8 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
 
     sendProgress('failed', 0, 0, 0, '', finalErrorMessage);
     return { success: false, error: finalErrorMessage };
+  } finally {
+    activeInstallations.delete(canonicalAppId);
   }
 });
 

@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS public.apps (
     sha256 TEXT,
     accent TEXT DEFAULT 'purple',
     icon_name TEXT DEFAULT 'target',
+    icon_url TEXT,
     features TEXT[] DEFAULT ARRAY[]::TEXT[],
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -98,6 +99,10 @@ CREATE TABLE IF NOT EXISTS public.apps (
 -- Pastikan kolom baru tersedia jika tabel apps sudah ada sebelumnya
 DO $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'apps' AND column_name = 'icon_url') THEN
+        ALTER TABLE public.apps ADD COLUMN icon_url TEXT;
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'apps' AND column_name = 'pack_id') THEN
         ALTER TABLE public.apps ADD COLUMN pack_id TEXT DEFAULT 'core-system';
     END IF;
