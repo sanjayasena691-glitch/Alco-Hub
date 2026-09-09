@@ -73,32 +73,32 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
     switch (type) {
       case 'hub_update':
         return {
-          icon: <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />,
+          icon: <RefreshCw className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />,
           label: 'ALCO Hub Update',
-          badgeClass: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
-          accentBorder: 'border-emerald-500/30',
+          badgeClass: 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-500/20',
+          accentBorder: 'border-emerald-500 dark:border-emerald-500/40',
         };
       case 'new_product':
         return {
-          icon: <Sparkles className="w-3.5 h-3.5 text-purple-400" />,
+          icon: <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />,
           label: 'New Product',
-          badgeClass: 'bg-purple-500/10 text-purple-300 border-purple-500/20',
-          accentBorder: 'border-purple-500/30',
+          badgeClass: 'bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-500/20',
+          accentBorder: 'border-purple-500 dark:border-purple-500/40',
         };
       case 'maintenance':
         return {
-          icon: <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />,
+          icon: <ShieldAlert className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />,
           label: 'Maintenance / Notice',
-          badgeClass: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
-          accentBorder: 'border-amber-500/30',
+          badgeClass: 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-500/20',
+          accentBorder: 'border-amber-500 dark:border-amber-500/40',
         };
       case 'general':
       default:
         return {
-          icon: <Megaphone className="w-3.5 h-3.5 text-blue-400" />,
+          icon: <Megaphone className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />,
           label: 'Announcement',
-          badgeClass: 'bg-blue-500/10 text-blue-300 border-blue-500/20',
-          accentBorder: 'border-blue-500/30',
+          badgeClass: 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/20',
+          accentBorder: 'border-blue-500 dark:border-blue-500/40',
         };
     }
   };
@@ -121,21 +121,21 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
   return (
     <div
       id="notification-center-backdrop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 dark:bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
     >
       <div
         id="notification-center-card"
-        className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl shadow-black/80 overflow-hidden"
+        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl dark:shadow-black/80 overflow-hidden"
       >
         {/* Header */}
-        <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 shrink-0">
+        <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950/60 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
               <Bell className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-extrabold text-white tracking-tight">
+                <h2 className="text-base font-extrabold text-slate-900 dark:text-white tracking-tight">
                   Notification Center
                 </h2>
                 {unreadCount > 0 && (
@@ -144,7 +144,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
                 Pengumuman dan pembaruan resmi Aladzan Corpora
               </p>
             </div>
@@ -156,10 +156,10 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                 id="mark-all-read-btn"
                 type="button"
                 onClick={onMarkAllAsRead}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 transition-colors"
                 title="Tandai semua pesan sebagai telah dibaca"
               >
-                <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
+                <CheckCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                 <span>Tandai Semua Dibaca</span>
               </button>
             )}
@@ -167,7 +167,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
               id="close-notification-center-btn"
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
@@ -175,14 +175,14 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
         </div>
 
         {/* Filter Tabs */}
-        <div className="px-5 py-3 border-b border-slate-800/80 bg-slate-950/30 flex items-center gap-2 overflow-x-auto shrink-0">
+        <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-800/80 bg-slate-50/60 dark:bg-slate-950/30 flex items-center gap-2 overflow-x-auto shrink-0">
           <button
             type="button"
             onClick={() => setSelectedType('all')}
             className={`px-3 py-1 rounded-md text-xs font-bold transition-all shrink-0 ${
               selectedType === 'all'
-                ? 'bg-slate-800 text-white'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                ? 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900'
             }`}
           >
             Semua ({notifications.length})
@@ -192,8 +192,8 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
             onClick={() => setSelectedType('hub_update')}
             className={`px-3 py-1 rounded-md text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${
               selectedType === 'hub_update'
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                : 'text-slate-400 hover:text-emerald-300 hover:bg-slate-900'
+                ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/40'
+                : 'text-slate-600 dark:text-slate-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-slate-100 dark:hover:bg-slate-900'
             }`}
           >
             <RefreshCw className="w-3 h-3" />
@@ -204,8 +204,8 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
             onClick={() => setSelectedType('new_product')}
             className={`px-3 py-1 rounded-md text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${
               selectedType === 'new_product'
-                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                : 'text-slate-400 hover:text-purple-300 hover:bg-slate-900'
+                ? 'bg-purple-100 dark:bg-purple-500/20 text-purple-800 dark:text-purple-300 border border-purple-300 dark:border-purple-500/40'
+                : 'text-slate-600 dark:text-slate-400 hover:text-purple-700 dark:hover:text-purple-300 hover:bg-slate-100 dark:hover:bg-slate-900'
             }`}
           >
             <Sparkles className="w-3 h-3" />
@@ -216,8 +216,8 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
             onClick={() => setSelectedType('maintenance')}
             className={`px-3 py-1 rounded-md text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${
               selectedType === 'maintenance'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                : 'text-slate-400 hover:text-amber-300 hover:bg-slate-900'
+                ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40'
+                : 'text-slate-600 dark:text-slate-400 hover:text-amber-700 dark:hover:text-amber-300 hover:bg-slate-100 dark:hover:bg-slate-900'
             }`}
           >
             <ShieldAlert className="w-3 h-3" />
@@ -243,8 +243,8 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                   }}
                   className={`p-4 rounded-xl border transition-all cursor-pointer ${
                     isRead
-                      ? 'bg-slate-950/40 border-slate-800 hover:border-slate-700'
-                      : `bg-slate-900 border-l-4 ${badge.accentBorder} border-slate-700 shadow-md shadow-black/30`
+                      ? 'bg-slate-50 dark:bg-slate-950/40 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                      : `bg-white dark:bg-slate-900 border-l-4 ${badge.accentBorder} border-slate-300 dark:border-slate-700 shadow-sm dark:shadow-md dark:shadow-black/30`
                   }`}
                 >
                   {/* Top Bar: Badge, Version, Timestamp, Unread dot */}
@@ -258,14 +258,14 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                       </span>
 
                       {notif.targetVersion && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                           v{notif.targetVersion}
                         </span>
                       )}
 
                       {!isRead && (
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-400">
-                          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping inline-block" />
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
                           <span>Baru</span>
                         </span>
                       )}
@@ -281,7 +281,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                   <div className="mt-2.5">
                     <h3
                       className={`text-sm font-bold tracking-tight ${
-                        isRead ? 'text-slate-200' : 'text-white'
+                        isRead ? 'text-slate-700 dark:text-slate-200' : 'text-slate-900 dark:text-white'
                       }`}
                     >
                       {notif.title}
@@ -291,7 +291,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                   {/* Message content */}
                   <div className="mt-1.5">
                     <p
-                      className={`text-xs text-slate-400 leading-relaxed whitespace-pre-line ${
+                      className={`text-xs text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-line ${
                         isExpanded ? '' : 'line-clamp-3'
                       }`}
                     >
@@ -301,8 +301,8 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
 
                   {/* Special Note for ALCO Hub Update */}
                   {notif.type === 'hub_update' && (
-                    <div className="mt-3 p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-800/40 flex items-start gap-2 text-[11px] text-emerald-300">
-                      <Info className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <div className="mt-3 p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 flex items-start gap-2 text-[11px] text-emerald-800 dark:text-emerald-300">
+                      <Info className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                       <span>
                         ALCO Hub mendistribusikan rilis melalui tautan unduhan resmi. Hub tidak melakukan self-update otomatis di background untuk menjaga integritas file lokal Anda.
                       </span>
@@ -311,7 +311,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
 
                   {/* CTA Action Button */}
                   {(notif.actionUrl || notif.actionLabel) && (
-                    <div className="mt-3 pt-3 border-t border-slate-800/70 flex items-center justify-between">
+                    <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800/70 flex items-center justify-between">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -334,10 +334,10 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
             })
           ) : (
             <div className="py-12 text-center space-y-3">
-              <div className="w-12 h-12 mx-auto rounded-full bg-slate-800/60 border border-slate-700 flex items-center justify-center text-slate-500">
+              <div className="w-12 h-12 mx-auto rounded-full bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 dark:text-slate-500">
                 <Bell className="w-6 h-6" />
               </div>
-              <p className="text-sm font-bold text-slate-300">Tidak ada pengumuman</p>
+              <p className="text-sm font-bold text-slate-700 dark:text-slate-300">Tidak ada pengumuman</p>
               <p className="text-xs text-slate-500 max-w-xs mx-auto">
                 Belum ada notifikasi resmi untuk kategori yang Anda pilih saat ini.
               </p>
@@ -346,7 +346,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between text-xs text-slate-500 shrink-0">
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 flex items-center justify-between text-xs text-slate-500 shrink-0">
           <span>ALCO Official Broadcast Service</span>
           <span>Aladzan Corpora Distribution</span>
         </div>

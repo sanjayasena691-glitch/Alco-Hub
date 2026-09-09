@@ -92,14 +92,14 @@ export const AppsView: React.FC<AppsViewProps> = ({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-extrabold text-white tracking-tight">
+            <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
               ALCO App Store
             </h1>
-            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/20">
               Official Catalog
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
             Pusat distribusi resmi seluruh produk, modul otomatisasi, dan arsitektur bisnis Aladzan Corpora.
           </p>
         </div>
@@ -109,29 +109,29 @@ export const AppsView: React.FC<AppsViewProps> = ({
           <button
             type="button"
             onClick={onSyncCatalog}
-            className="p-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white text-xs inline-flex items-center gap-1.5 transition-colors shrink-0"
+            className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs inline-flex items-center gap-1.5 transition-colors shrink-0"
             title="Sinkronisasi Katalog dari Supabase Cloud"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncMeta.status === 'syncing' ? 'animate-spin text-indigo-400' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${syncMeta.status === 'syncing' ? 'animate-spin text-indigo-600 dark:text-indigo-400' : ''}`} />
             <span className="hidden sm:inline">Sync</span>
           </button>
 
           <div className="relative w-full md:w-72">
-            <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               id="apps-search-input"
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search apps or functions..."
-              className="w-full pl-9 pr-4 py-2 text-xs bg-slate-900 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
+              className="w-full pl-9 pr-4 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors shadow-xs"
             />
           </div>
         </div>
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-b border-slate-800 pb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-b border-slate-200 dark:border-slate-800 pb-4">
         {/* Pack filter tabs */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
           <button
@@ -139,8 +139,8 @@ export const AppsView: React.FC<AppsViewProps> = ({
             onClick={() => setSelectedPackFilter('all')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
               selectedPackFilter === 'all'
-                ? 'bg-slate-800 text-white'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                ? 'bg-slate-900 dark:bg-slate-800 text-white'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900'
             }`}
           >
             All Packs ({apps.length})
@@ -154,8 +154,8 @@ export const AppsView: React.FC<AppsViewProps> = ({
                 onClick={() => setSelectedPackFilter(pack.id)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors whitespace-nowrap ${
                   selectedPackFilter === pack.id
-                    ? 'bg-slate-800 text-white'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                    ? 'bg-slate-900 dark:bg-slate-800 text-white'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900'
                 }`}
               >
                 {pack.name} ({count})
@@ -166,11 +166,11 @@ export const AppsView: React.FC<AppsViewProps> = ({
 
         {/* Pricing / Licensing Quick Filter */}
         <div className="flex items-center gap-1.5 text-xs">
-          <span className="text-slate-500 text-[11px] font-medium hidden sm:inline">Filter:</span>
+          <span className="text-slate-500 dark:text-slate-400 text-[11px] font-medium hidden sm:inline">Filter:</span>
           <select
             value={selectedPricingFilter}
             onChange={(e) => setSelectedPricingFilter(e.target.value)}
-            className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500"
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-300 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-indigo-500 shadow-xs"
           >
             <option value="all">Semua Tipe Aplikasi</option>
             <option value="installed">Terpasang di Komputer (Installed)</option>
@@ -201,10 +201,10 @@ export const AppsView: React.FC<AppsViewProps> = ({
           })}
         </div>
       ) : (
-        <div className="text-center py-16 bg-slate-900/40 rounded-xl border border-slate-800/80 p-8 space-y-3">
-          <ShoppingBag className="w-8 h-8 text-slate-600 mx-auto" />
-          <h3 className="text-sm font-bold text-slate-300">Tidak ada aplikasi yang sesuai filter</h3>
-          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+        <div className="text-center py-16 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-200 dark:border-slate-800/80 p-8 space-y-3">
+          <ShoppingBag className="w-8 h-8 text-slate-400 dark:text-slate-600 mx-auto" />
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-300">Tidak ada aplikasi yang sesuai filter</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
             Coba ubah kata kunci pencarian atau reset filter untuk melihat katalog aplikasi lainnya.
           </p>
           <button
@@ -214,7 +214,7 @@ export const AppsView: React.FC<AppsViewProps> = ({
               setSelectedPackFilter('all');
               setSelectedPricingFilter('all');
             }}
-            className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
+            className="px-3.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-900 dark:text-white rounded-lg text-xs font-semibold"
           >
             Reset Filter
           </button>

@@ -109,7 +109,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     return Boolean(inst?.isInstalled && app.latestVersion && inst.version && app.latestVersion !== inst.version);
   });
 
-  const installedCount = Object.values(localInstallations).filter((i) => i && i.isInstalled).length;
+  const installedCount = (Object.values(localInstallations) as AppLocalInstallation[]).filter((i) => i && i.isInstalled).length;
 
   return (
     <div id="alco-settings-view" className="space-y-8 max-w-4xl">

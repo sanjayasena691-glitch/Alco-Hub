@@ -47,10 +47,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     <div id="alco-library-view" className="space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight">
+          <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
             My Desktop Apps
           </h1>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
             Daftar seluruh aplikasi ALCO yang terpasang di komputer ini dan siap dijalankan.
           </p>
         </div>
@@ -58,7 +58,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
         <button
           type="button"
           onClick={onGoToStore}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md shrink-0"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm shrink-0"
         >
           <ShoppingBag className="w-3.5 h-3.5" />
           <span>Jelajahi App Store</span>
@@ -67,7 +67,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
       {installedApps.length > 0 ? (
         <div className="space-y-4">
-          <div className="flex items-center gap-2 text-xs text-emerald-400 font-bold uppercase tracking-wider">
+          <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider">
             <CheckCircle2 className="w-4 h-4" />
             <span>Aplikasi Terpasang ({installedApps.length})</span>
           </div>
@@ -91,21 +91,21 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           </div>
         </div>
       ) : (
-        <div className="text-center py-16 bg-slate-900/40 rounded-2xl border border-slate-800 p-8 space-y-4 max-w-lg mx-auto">
-          <HardDrive className="w-12 h-12 text-slate-600 mx-auto" />
+        <div className="text-center py-16 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 space-y-4 max-w-lg mx-auto">
+          <HardDrive className="w-12 h-12 text-slate-400 dark:text-slate-600 mx-auto" />
           <div>
-            <h3 className="text-base font-bold text-slate-200">Belum Ada Aplikasi Terpasang</h3>
-            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+            <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">Belum Ada Aplikasi Terpasang</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
               Jelajahi App Store untuk mengunduh dan memasang aplikasi ALCO seperti Content Engine, Creative System, dan lainnya.
             </p>
           </div>
           <button
             type="button"
             onClick={onGoToStore}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-sm"
           >
             <span>Buka App Store</span>
-            <ArrowRight className="w-4 h-4" />
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
