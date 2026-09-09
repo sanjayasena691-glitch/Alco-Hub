@@ -35,7 +35,6 @@ contextBridge.exposeInMainWorld('alcoHub', {
       ipcRenderer.removeListener('install-progress', listener);
     };
   },
-  checkContentEngineUpdate: () => ipcRenderer.invoke('check-content-engine-update'),
   selectInstallerFile: () => ipcRenderer.invoke('select-installer-file'),
   calculateFileHash: (filePath) => ipcRenderer.invoke('calculate-file-hash', filePath),
   checkGhCliStatus: () => ipcRenderer.invoke('check-gh-cli-status'),

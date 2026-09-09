@@ -13,8 +13,6 @@ import {
 import {
   EcosystemPack,
   EcosystemApp,
-  ContentEngineUpdateResult,
-  ContentEngineUpdateStatus,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
@@ -29,8 +27,6 @@ interface PacksViewProps {
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
-  updateResult: ContentEngineUpdateResult | null;
-  updateStatus: ContentEngineUpdateStatus;
 }
 
 export const PacksView: React.FC<PacksViewProps> = ({
@@ -41,8 +37,6 @@ export const PacksView: React.FC<PacksViewProps> = ({
   onOpenApp,
   onInstallApp,
   onUpdateApp,
-  updateResult,
-  updateStatus,
 }) => {
   const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
 
@@ -341,8 +335,6 @@ export const PacksView: React.FC<PacksViewProps> = ({
                         setSelectedPackId(null);
                         onUpdateApp(a);
                       }}
-                      updateResult={updateResult}
-                      updateStatus={updateStatus}
                       featured
                     />
                   );

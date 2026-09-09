@@ -31,7 +31,6 @@ import {
   EcosystemApp,
   ProductAccent,
   ProductIconName,
-  ContentEngineUpdateResult,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
@@ -44,8 +43,6 @@ interface ApplicationCardProps {
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp?: (app: EcosystemApp) => void;
   onCheckInstalled?: (appId: string) => Promise<boolean> | void;
-  updateResult?: ContentEngineUpdateResult | null;
-  updateStatus?: 'checking' | 'up-to-date' | 'update-available' | 'unable-to-check';
   featured?: boolean;
 }
 
@@ -162,8 +159,6 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   onInstallApp,
   onUpdateApp,
   onCheckInstalled,
-  updateResult,
-  updateStatus,
   featured = false,
 }) => {
   const accent = ACCENT_STYLES[app.accent] || ACCENT_STYLES.purple;
@@ -191,11 +186,10 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   // Only active background operations that lock the UI button count as "busy"
   const isBusy = isDownloading || isVerifying || isLaunching;
 
-  // Update calculation
+  // Generic Update calculation for all applications
   const hasUpdate =
     isInstalled &&
-    ((app.latestVersion && installation?.version && app.latestVersion !== installation.version) ||
-      (app.id === 'content-engine' && updateStatus === 'update-available'));
+    Boolean(app.latestVersion && installation?.version && app.latestVersion !== installation.version);
 
   const renderIcon = (name: ProductIconName) => {
     switch (name) {

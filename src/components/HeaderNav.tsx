@@ -16,7 +16,7 @@ import {
   ShieldAlert,
   Bell,
 } from 'lucide-react';
-import { NavigationTab, ContentEngineUpdateStatus } from '../types';
+import { NavigationTab } from '../types';
 import { getMaskedApiKey } from '../services/aiNavigatorService';
 
 interface HeaderNavProps {
@@ -24,7 +24,7 @@ interface HeaderNavProps {
   onSelectTab: (tab: NavigationTab) => void;
   apiKey: string;
   onRequestApiKey: () => void;
-  updateStatus: ContentEngineUpdateStatus;
+  hasUpdateAvailable?: boolean;
   installedCount?: number;
   unreadNotificationCount?: number;
   onOpenNotifications?: () => void;
@@ -35,12 +35,12 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   onSelectTab,
   apiKey,
   onRequestApiKey,
-  updateStatus,
+  hasUpdateAvailable = false,
   installedCount = 0,
   unreadNotificationCount = 0,
   onOpenNotifications,
 }) => {
-  const hasUpdate = updateStatus === 'update-available';
+  const hasUpdate = hasUpdateAvailable;
 
   const navItems: { id: NavigationTab; label: string; icon: React.ReactNode; badge?: React.ReactNode }[] = [
     {

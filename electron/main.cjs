@@ -7,8 +7,6 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 let staticServer = null;
-const CONTENT_ENGINE_REGISTRY_URL = process.env.ALCO_CONTENT_ENGINE_REGISTRY_URL
-  || 'https://raw.githubusercontent.com/yaladzan92-creator/Alco-Releases/main/registry.json';
 
 function getMimeType(filePath) {
   const types = {
@@ -359,43 +357,6 @@ function fetchJsonWithTimeout(rawUrl, timeoutMs = 5000, redirectCount = 0) {
     });
     request.on('error', reject);
   });
-}
-
-function getContentEngineRegistryEntry(registry) {
-  if (!registry || typeof registry !== 'object') {
-    return null;
-  }
-  const entry = registry?.apps?.['alco-content-engine'];
-  return entry && typeof entry === 'object' ? entry : null;
-}
-
-function validateRegistryEntry(entry) {
-  if (!entry || typeof entry !== 'object') {
-    return { valid: false, error: 'Entry ALCO Content Engine tidak ditemukan di registry.' };
-  }
-  const requiredFields = ['latestVersion', 'status', 'downloadUrl', 'sha256'];
-  const missingFields = requiredFields.filter((field) => typeof entry?.[field] !== 'string' || entry[field].trim().length === 0);
-  if (missingFields.length > 0) {
-    return { valid: false, error: `Registry field tidak valid: ${missingFields.join(', ')}.` };
-  }
-  if (!normalizeVersion(entry.latestVersion)) {
-    return { valid: false, error: 'latestVersion bukan semantic version valid.' };
-  }
-  if (!isValidSecureUrl(entry.downloadUrl)) {
-    return { valid: false, error: 'downloadUrl harus HTTPS.' };
-  }
-  if (!/^[a-f0-9]{64}$/i.test(entry.sha256.trim())) {
-    return { valid: false, error: 'sha256 harus berisi 64 karakter hex.' };
-  }
-  return {
-    valid: true,
-    data: {
-      latestVersion: entry.latestVersion.trim(),
-      status: entry.status.trim(),
-      downloadUrl: entry.downloadUrl.trim(),
-      sha256: entry.sha256.trim(),
-    },
-  };
 }
 
 function createWindow() {
@@ -1113,78 +1074,6 @@ ipcMain.handle('open-desktop-app', async (_event, appId) => {
   return errorMessage
     ? { success: false, error: errorMessage }
     : { success: true };
-});
-
-ipcMain.handle('check-content-engine-update', async () => {
-  const appDefinition = desktopApps['content-engine'];
-  const executablePath = resolveDesktopAppExecutable(appDefinition);
-  const localVersion = getLocalAppVersion(appDefinition, executablePath);
-
-  try {
-    const registry = await fetchJsonWithTimeout(CONTENT_ENGINE_REGISTRY_URL);
-    const registryEntry = getContentEngineRegistryEntry(registry);
-    const validation = validateRegistryEntry(registryEntry);
-
-    if (!validation.valid) {
-      return {
-        success: false,
-        status: 'unable-to-check',
-        error: validation.error,
-        localVersion: localVersion.version,
-        localVersionSource: localVersion.source,
-        executablePath,
-        registryUrl: CONTENT_ENGINE_REGISTRY_URL,
-      };
-    }
-
-    if (!localVersion.version) {
-      return {
-        success: true,
-        status: 'unable-to-check',
-        error: 'Versi lokal ALCO Content Engine tidak ditemukan.',
-        localVersion: null,
-        localVersionSource: null,
-        executablePath,
-        registry: validation.data,
-        registryUrl: CONTENT_ENGINE_REGISTRY_URL,
-      };
-    }
-
-    const comparison = compareSemanticVersions(localVersion.version, validation.data.latestVersion);
-    if (comparison === null) {
-      return {
-        success: false,
-        status: 'unable-to-check',
-        error: 'Versi lokal bukan semantic version valid.',
-        localVersion: localVersion.version,
-        localVersionSource: localVersion.source,
-        executablePath,
-        registry: validation.data,
-        registryUrl: CONTENT_ENGINE_REGISTRY_URL,
-      };
-    }
-
-    return {
-      success: true,
-      status: comparison < 0 ? 'update-available' : 'up-to-date',
-      localVersion: localVersion.version,
-      localVersionSource: localVersion.source,
-      latestVersion: validation.data.latestVersion,
-      executablePath,
-      registry: validation.data,
-      registryUrl: CONTENT_ENGINE_REGISTRY_URL,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      status: 'unable-to-check',
-      error: error instanceof Error ? error.message : 'Update check gagal.',
-      localVersion: localVersion.version,
-      localVersionSource: localVersion.source,
-      executablePath,
-      registryUrl: CONTENT_ENGINE_REGISTRY_URL,
-    };
-  }
 });
 
 // ==========================================

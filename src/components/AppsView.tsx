@@ -18,8 +18,6 @@ import {
 import {
   EcosystemApp,
   EcosystemPack,
-  ContentEngineUpdateResult,
-  ContentEngineUpdateStatus,
   SyncMeta,
   AppLocalInstallation,
   AppInstallProgress,
@@ -37,8 +35,6 @@ interface AppsViewProps {
   onUpdateApp: (app: EcosystemApp) => void;
   onCheckInstalled?: (appId: string) => Promise<boolean> | void;
   onSyncCatalog: () => void;
-  updateResult: ContentEngineUpdateResult | null;
-  updateStatus: ContentEngineUpdateStatus;
 }
 
 export const AppsView: React.FC<AppsViewProps> = ({
@@ -52,8 +48,6 @@ export const AppsView: React.FC<AppsViewProps> = ({
   onUpdateApp,
   onCheckInstalled,
   onSyncCatalog,
-  updateResult,
-  updateStatus,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPackFilter, setSelectedPackFilter] = useState<string>('all');
@@ -202,8 +196,6 @@ export const AppsView: React.FC<AppsViewProps> = ({
                 onInstallApp={onInstallApp}
                 onUpdateApp={onUpdateApp}
                 onCheckInstalled={onCheckInstalled}
-                updateResult={updateResult}
-                updateStatus={updateStatus}
               />
             );
           })}

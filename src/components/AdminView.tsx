@@ -42,7 +42,6 @@ import {
   BroadcastNotification,
 } from '../types';
 import {
-  generateLicenseKey,
   saveAppToCloud,
   deleteAppFromCloud,
   togglePublishAppInCloud,
@@ -94,7 +93,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 }) => {
   // Navigation & Subtabs
   const [activeTab, setActiveTab] = useState<
-    'apps' | 'packs' | 'notifications' | 'releases' | 'licenses' | 'updates' | 'contact' | 'supabase'
+    'apps' | 'packs' | 'notifications' | 'releases' | 'updates' | 'contact' | 'supabase'
   >('apps');
   const [isEditing, setIsEditing] = useState(false);
   const [editingApp, setEditingApp] = useState<EcosystemApp | null>(null);
@@ -105,10 +104,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [authStatus, setAuthStatus] = useState<OwnerAuthStatus | null>(null);
-
-  // License Generator State
-  const [selectedAppForLicense, setSelectedAppForLicense] = useState(apps[0]?.id || '');
-  const [generatedKeys, setGeneratedKeys] = useState<{ appId: string; key: string; date: string }[]>([]);
 
   // Update Publisher State
   const [selectedAppForUpdate, setSelectedAppForUpdate] = useState(apps[0]?.id || '');
@@ -269,17 +264,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
   };
 
   // --------------------------------------------------------------------------
-  // LICENSE & MANUAL UPDATE HANDLERS
+  // MANUAL UPDATE HANDLERS
   // --------------------------------------------------------------------------
-  const handleGenerateKey = () => {
-    const key = generateLicenseKey(selectedAppForLicense);
-    setGeneratedKeys([
-      { appId: selectedAppForLicense, key, date: new Date().toLocaleTimeString() },
-      ...generatedKeys,
-    ]);
-    showNotification(`License key resmi dibuat: ${key}`);
-  };
-
   const handlePublishUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newVersionInput.trim()) {
@@ -555,15 +541,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
         </button>
         <button
           type="button"
-          onClick={() => { setActiveTab('licenses'); setIsEditing(false); }}
-          className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
-            activeTab === 'licenses' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          License Generator
-        </button>
-        <button
-          type="button"
           onClick={() => { setActiveTab('updates'); setIsEditing(false); }}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
             activeTab === 'updates' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-400 hover:text-white'
@@ -740,90 +717,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* TAB: LICENSE ARCHITECTURE & GENERATOR */}
-      {activeTab === 'licenses' && (
-        <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-6">
-          <div className="space-y-1">
-            <h3 className="text-base font-bold text-white">Arsitektur Lisensi Aplikasi ALCO</h3>
-            <p className="text-xs text-slate-400">
-              Lisensi aplikasi komersial diverifikasi mandiri oleh masing-masing aplikasi (In-App Verification) menggunakan Request Code dan License Code dari generator terpisah milik Owner.
-            </p>
-          </div>
-
-          <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-300 space-y-2">
-            <p className="font-bold text-white flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-indigo-400" />
-              <span>Workflow Lisensi Resmi ALCO:</span>
-            </p>
-            <ol className="list-decimal list-inside space-y-1 text-slate-300 leading-relaxed pl-1">
-              <li>User membuka aplikasi desktop yang terpasang melalui ALCO Hub.</li>
-              <li>Aplikasi memeriksa lisensinya sendiri saat dijalankan.</li>
-              <li>Jika belum aktif, aplikasi menampilkan Request Code kepada user.</li>
-              <li>User mengirim Request Code ke Owner via WhatsApp.</li>
-              <li>Owner menggunakan <strong>ALCO License Generator eksternal</strong> (Private Key aman offline) untuk menghasilkan License Code.</li>
-              <li>User memasukkan License Code langsung ke dalam aplikasi untuk aktivasi permanen.</li>
-            </ol>
-            <p className="text-[11px] text-slate-400 pt-1">
-              * ALCO Hub bertindak sebagai Catalog, Downloader, Installer, Updater, dan Launcher murni tanpa memblokir proses pembukaan aplikasi.
-            </p>
-          </div>
-
-          <div className="space-y-3 pt-2">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Legacy Key Preview Utility
-            </h4>
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <select
-                value={selectedAppForLicense}
-                onChange={(e) => setSelectedAppForLicense(e.target.value)}
-                className="w-full sm:w-80 px-3.5 py-2.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white"
-              >
-                {apps
-                  .filter((a) => a.pricingType === 'licensed' || a.pricingType === 'trial')
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.priceLabel})</option>
-                  ))}
-              </select>
-
-              <button
-                type="button"
-                onClick={handleGenerateKey}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md"
-              >
-                <Key className="w-4 h-4" />
-                <span>Generate Sample Token</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Generated Keys List */}
-          <div className="space-y-3 pt-4 border-t border-slate-800">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">
-              Sample Generated Tokens ({generatedKeys.length})
-            </span>
-
-            {generatedKeys.length > 0 ? (
-              <div className="space-y-2">
-                {generatedKeys.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div>
-                      <span className="text-slate-400 font-mono text-[11px] block">{item.appId}</span>
-                      <span className="text-emerald-400 font-bold font-mono text-sm select-all">{item.key}</span>
-                    </div>
-                    <span className="text-slate-500 text-[11px]">{item.date}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-slate-500 italic">Belum ada token yang dibuat pada sesi ini.</p>
-            )}
-          </div>
         </div>
       )}
 

@@ -8,11 +8,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   NavigationTab,
-  ContentEngineUpdateStatus,
-  ContentEngineUpdateResult,
   EcosystemApp,
   EcosystemPack,
-  UserLicense,
   ContactAlcoConfig,
   SyncMeta,
   AdminAuthSession,
@@ -31,9 +28,7 @@ import {
   getSyncMeta,
   getAdminSession,
   checkAndRestoreOwnerSession,
-  getUserLicenses,
   getContactConfig,
-  isAppLicensed,
 } from './services/storeService';
 import {
   getCachedNotifications,
@@ -60,7 +55,6 @@ import { UpdatesView } from './components/UpdatesView';
 import { AdminView } from './components/AdminView';
 import { SettingsView } from './components/SettingsView';
 import { ApiKeyModal } from './components/ApiKeyModal';
-import { LicenseModal } from './components/LicenseModal';
 import { NotificationCenterModal } from './components/NotificationCenterModal';
 
 export default function App() {
@@ -68,15 +62,12 @@ export default function App() {
   const [apiKey, setApiKey] = useState<string>('');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
 
-  // Store & Licensing States
+  // Store & Catalog States
   const [apps, setApps] = useState<EcosystemApp[]>(getCachedApps());
   const [packs, setPacks] = useState<EcosystemPack[]>(getCachedPacks());
-  const [userLicenses, setUserLicenses] = useState<Record<string, UserLicense>>(getUserLicenses());
   const [contactConfig, setContactConfig] = useState<ContactAlcoConfig>(getContactConfig());
   const [syncMeta, setSyncMeta] = useState<SyncMeta>(getSyncMeta());
   const [adminSession, setAdminSession] = useState<AdminAuthSession>(getAdminSession());
-  const [selectedAppForLicense, setSelectedAppForLicense] = useState<EcosystemApp | null>(null);
-  const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
 
   // Broadcast Notification States
   const [notifications, setNotifications] = useState<BroadcastNotification[]>(getCachedNotifications());
@@ -86,17 +77,13 @@ export default function App() {
   // Desktop Local Installations & Progress State
   const [localInstallations, setLocalInstallations] = useState<Record<string, AppLocalInstallation>>({});
   const [installProgressMap, setInstallProgressMap] = useState<Record<string, AppInstallProgress>>({});
-
-  // Update Checker States
-  const [contentEngineUpdate, setContentEngineUpdate] = useState<ContentEngineUpdateResult | null>(null);
-  const [contentEngineUpdateStatus, setContentEngineUpdateStatus] = useState<ContentEngineUpdateStatus>('checking');
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState<boolean>(false);
 
   // 1. Initial Load: Restore Owner session from Supabase Auth + admin_users, load cache, then sync Supabase catalog
   useEffect(() => {
     // Read local cache immediately for zero-delay UI rendering
     setApps(getCachedApps());
     setPacks(getCachedPacks());
-    setUserLicenses(getUserLicenses());
     setContactConfig(getContactConfig());
     setSyncMeta(getSyncMeta());
     setApiKey(getUserApiKey());
@@ -180,7 +167,7 @@ export default function App() {
     const client = getSupabase();
     let authSub: any = null;
     if (client) {
-      const { data } = client.auth.onAuthStateChange(async (event, session) => {
+      const { data } = client.auth.onAuthStateChange(async (event) => {
         if (event === 'SIGNED_OUT') {
           const guestSession: AdminAuthSession = {
             isAuthenticated: false,
@@ -223,11 +210,6 @@ export default function App() {
     };
   }, []);
 
-  // 2. Check local binary updates on initial load
-  useEffect(() => {
-    checkUpdates();
-  }, []);
-
   const handleCatalogSync = async (force: boolean = false) => {
     const [catalogRes, syncedPacks, syncedNotifs] = await Promise.all([
       syncCatalogWithSupabase({
@@ -247,22 +229,12 @@ export default function App() {
     setLocalInstallations(installed);
   };
 
-  const checkUpdates = () => {
-    if (!window.alcoHub?.checkContentEngineUpdate) {
-      setContentEngineUpdateStatus('unable-to-check');
-      return;
-    }
-
-    window.alcoHub
-      .checkContentEngineUpdate()
-      .then((result) => {
-        setContentEngineUpdate(result);
-        setContentEngineUpdateStatus(result.status || 'unable-to-check');
-      })
-      .catch((err) => {
-        console.warn('Update check failed:', err);
-        setContentEngineUpdateStatus('unable-to-check');
-      });
+  const handleCheckUpdates = async () => {
+    setIsCheckingUpdates(true);
+    await handleCatalogSync(true);
+    const installed = await checkAllAppsInstallation();
+    setLocalInstallations(installed);
+    setIsCheckingUpdates(false);
   };
 
   const handleInstallApp = async (app: EcosystemApp) => {
@@ -329,14 +301,6 @@ export default function App() {
       return;
     }
 
-    // License Check
-    const hasLicense = isAppLicensed(app, userLicenses);
-    if (!hasLicense && app.pricingType === 'licensed') {
-      setSelectedAppForLicense(app);
-      setIsLicenseModalOpen(true);
-      return;
-    }
-
     const canonicalId = app.appId || app.id;
     const isLocalInstalled = localInstallations[canonicalId]?.isInstalled || localInstallations[app.id]?.isInstalled;
 
@@ -368,11 +332,6 @@ export default function App() {
     }
   };
 
-  const handleRequestLicense = (app: EcosystemApp) => {
-    setSelectedAppForLicense(app);
-    setIsLicenseModalOpen(true);
-  };
-
   const handlePerformUpdate = (app: EcosystemApp) => {
     // If installer download exists, trigger installer flow
     if (app.downloadUrl && app.sha256) {
@@ -380,7 +339,7 @@ export default function App() {
       return;
     }
 
-    // Update local app version in catalog while preserving licenses!
+    // Update local app version in catalog
     const updatedApps = apps.map((a) => {
       if (a.id === app.id) {
         return {
@@ -395,30 +354,30 @@ export default function App() {
     setApps(updatedApps);
   };
 
-  const handleLicenseActivated = (appId: string) => {
-    setUserLicenses(getUserLicenses());
-  };
-
   const coreApps = apps.filter((a) => a.packId === 'core-system');
   const recentApp = apps.find((a) => a.id === 'content-engine') || apps[0];
-  const activeLicensesCount = Object.keys(userLicenses).length;
   const installedCount = (Object.values(localInstallations) as AppLocalInstallation[]).filter((i) => i && i.isInstalled).length;
   const unreadNotificationCount = notifications.filter((n) => {
     if (!n.published) return false;
-    if (n.expires_at && new Date(n.expires_at).getTime() < Date.now()) return false;
+    if (n.expiresAt && new Date(n.expiresAt).getTime() < Date.now()) return false;
     return !readNotificationIds.includes(n.id);
   }).length;
 
+  const hasAnyUpdate = apps.some((app) => {
+    const canonicalId = app.appId || app.id;
+    const inst = localInstallations[canonicalId] || localInstallations[app.id];
+    return Boolean(inst?.isInstalled && app.latestVersion && inst.version && app.latestVersion !== inst.version);
+  });
+
   return (
-    <div id="alco-hub-app" className="min-h-screen bg-[#0b0f17] text-slate-100 flex flex-col justify-between selection:bg-indigo-500/30 selection:text-indigo-200">
+    <div id="alco-hub-app" className="min-h-screen bg-slate-50 dark:bg-[#0b0f17] text-slate-900 dark:text-slate-100 flex flex-col justify-between selection:bg-indigo-500/30 selection:text-indigo-200 transition-colors duration-200">
       {/* 1. Header Navigation Bar */}
       <HeaderNav
         activeTab={activeTab}
         onSelectTab={(tab) => setActiveTab(tab)}
         apiKey={apiKey}
         onRequestApiKey={() => setIsApiKeyModalOpen(true)}
-        updateStatus={contentEngineUpdateStatus}
-        activeLicensesCount={activeLicensesCount}
+        hasUpdateAvailable={hasAnyUpdate}
         installedCount={installedCount}
         unreadNotificationCount={unreadNotificationCount}
         onOpenNotifications={() => setIsNotificationCenterOpen(true)}
@@ -431,7 +390,6 @@ export default function App() {
             coreApps={coreApps}
             packs={packs}
             allApps={apps}
-            userLicenses={userLicenses}
             localInstallations={localInstallations}
             installProgressMap={installProgressMap}
             recentApp={recentApp}
@@ -439,11 +397,8 @@ export default function App() {
             onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
             onCheckInstalled={handleCheckAppInstallation}
-            onRequestLicense={handleRequestLicense}
             onExplorePack={() => setActiveTab('packs')}
             onNavigateTab={(tab) => setActiveTab(tab)}
-            updateResult={contentEngineUpdate}
-            updateStatus={contentEngineUpdateStatus}
             apiKey={apiKey}
             onRequestApiKey={() => setIsApiKeyModalOpen(true)}
           />
@@ -453,7 +408,6 @@ export default function App() {
           <AppsView
             apps={apps}
             packs={packs}
-            userLicenses={userLicenses}
             localInstallations={localInstallations}
             installProgressMap={installProgressMap}
             syncMeta={syncMeta}
@@ -461,27 +415,20 @@ export default function App() {
             onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
             onCheckInstalled={handleCheckAppInstallation}
-            onRequestLicense={handleRequestLicense}
             onSyncCatalog={() => handleCatalogSync(true)}
-            updateResult={contentEngineUpdate}
-            updateStatus={contentEngineUpdateStatus}
           />
         )}
 
         {activeTab === 'library' && (
           <LibraryView
             apps={apps}
-            userLicenses={userLicenses}
             localInstallations={localInstallations}
             installProgressMap={installProgressMap}
             onOpenApp={handleOpenApp}
             onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
             onCheckInstalled={handleCheckAppInstallation}
-            onRequestLicense={handleRequestLicense}
             onGoToStore={() => setActiveTab('store')}
-            updateResult={contentEngineUpdate}
-            updateStatus={contentEngineUpdateStatus}
           />
         )}
 
@@ -489,27 +436,21 @@ export default function App() {
           <PacksView
             packs={packs}
             apps={apps}
-            userLicenses={userLicenses}
             localInstallations={localInstallations}
             installProgressMap={installProgressMap}
             onOpenApp={handleOpenApp}
             onInstallApp={handleInstallApp}
             onUpdateApp={handlePerformUpdate}
-            onRequestLicense={handleRequestLicense}
-            updateResult={contentEngineUpdate}
-            updateStatus={contentEngineUpdateStatus}
           />
         )}
 
         {activeTab === 'updates' && (
           <UpdatesView
             apps={apps}
-            userLicenses={userLicenses}
             localInstallations={localInstallations}
             installProgressMap={installProgressMap}
-            updateResult={contentEngineUpdate}
-            updateStatus={contentEngineUpdateStatus}
-            onCheckUpdate={checkUpdates}
+            isCheckingUpdates={isCheckingUpdates}
+            onCheckUpdate={handleCheckUpdates}
             onPerformUpdate={handlePerformUpdate}
             onInstallApp={handleInstallApp}
           />
@@ -549,16 +490,16 @@ export default function App() {
       </main>
 
       {/* 3. Control Center Footer */}
-      <footer id="alco-footer" className="border-t border-slate-800/80 bg-slate-950 py-6 mt-12">
+      <footer id="alco-footer" className="border-t border-slate-200 dark:border-slate-800/80 bg-slate-100 dark:bg-slate-950 py-6 mt-12 transition-colors duration-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-300">{HUB_META.name}</span>
+            <span className="font-bold text-slate-700 dark:text-slate-300">{HUB_META.name}</span>
             <span>•</span>
             <span>{HUB_META.ecosystem}</span>
             <span>•</span>
-            <span className="font-mono text-[11px] text-slate-400">v{HUB_META.version}</span>
+            <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">v{HUB_META.version}</span>
           </div>
-          <p className="text-slate-400 text-center sm:text-right">
+          <p className="text-slate-500 dark:text-slate-400 text-center sm:text-right">
             {HUB_META.principles}
           </p>
         </div>
@@ -575,20 +516,7 @@ export default function App() {
         }}
       />
 
-      {/* 5. Official License Activation & Purchase Modal */}
-      <LicenseModal
-        app={selectedAppForLicense}
-        isOpen={isLicenseModalOpen}
-        onClose={() => {
-          setIsLicenseModalOpen(false);
-          setSelectedAppForLicense(null);
-        }}
-        userLicense={selectedAppForLicense ? userLicenses[selectedAppForLicense.id] : undefined}
-        contactConfig={contactConfig}
-        onLicenseActivated={handleLicenseActivated}
-      />
-
-      {/* 6. Broadcast Notification Center Modal */}
+      {/* 5. Broadcast Notification Center Modal */}
       <NotificationCenterModal
         isOpen={isNotificationCenterOpen}
         onClose={() => setIsNotificationCenterOpen(false)}

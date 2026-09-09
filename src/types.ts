@@ -5,10 +5,10 @@
 
 export type NavigationTab = 'home' | 'store' | 'library' | 'packs' | 'updates' | 'admin' | 'settings';
 
+export type ThemePreference = 'system' | 'light' | 'dark';
+
 export type PricingType = 'free' | 'licensed' | 'trial' | 'coming-soon';
 export type AccessModel = 'free' | 'licensed' | 'trial' | 'coming-soon';
-
-export type UserLicenseStatus = 'active' | 'inactive' | 'expired' | 'none';
 
 export type AppStatus =
   | 'installed'
@@ -76,19 +76,8 @@ export interface EcosystemApp {
   comingSoon?: boolean;
   features?: string[];
   lastOpenedText?: string;
-  requiredLicenseAppId?: string;
   createdAt?: string;
   updatedAt?: string;
-}
-
-export interface UserLicense {
-  appId: string;
-  licenseKey: string;
-  licensedTo: string;
-  activatedAt: string;
-  status: UserLicenseStatus;
-  expiresAt?: string;
-  tier?: string;
 }
 
 export interface EcosystemPack {
@@ -104,22 +93,6 @@ export interface EcosystemPack {
   isCustom?: boolean;
   createdAt?: string;
   updatedAt?: string;
-}
-
-export type ContentEngineUpdateStatus = 'checking' | 'up-to-date' | 'update-available' | 'unable-to-check';
-
-export interface ContentEngineUpdateResult {
-  success: boolean;
-  status: Exclude<ContentEngineUpdateStatus, 'checking'>;
-  error?: string;
-  localVersion?: string | null;
-  latestVersion?: string;
-  registry?: {
-    latestVersion: string;
-    status: string;
-    downloadUrl: string;
-    sha256: string;
-  };
 }
 
 export interface ContactAlcoConfig {
@@ -370,7 +343,6 @@ declare global {
         repoName?: string;
       }) => Promise<InstallResult>;
       onInstallProgress: (callback: (data: AppInstallProgress) => void) => () => void;
-      checkContentEngineUpdate?: () => Promise<ContentEngineUpdateResult>;
       selectInstallerFile?: () => Promise<NativeFileSelection>;
       calculateFileHash?: (filePath: string) => Promise<{ success: boolean; sha256?: string; error?: string }>;
       checkGhCliStatus?: () => Promise<GhCliStatus>;

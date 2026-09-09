@@ -12,8 +12,6 @@ import {
 } from 'lucide-react';
 import {
   EcosystemApp,
-  ContentEngineUpdateResult,
-  ContentEngineUpdateStatus,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
@@ -28,8 +26,6 @@ interface LibraryViewProps {
   onUpdateApp: (app: EcosystemApp) => void;
   onCheckInstalled?: (appId: string) => Promise<boolean> | void;
   onGoToStore: () => void;
-  updateResult: ContentEngineUpdateResult | null;
-  updateStatus: ContentEngineUpdateStatus;
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({
@@ -41,8 +37,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onUpdateApp,
   onCheckInstalled,
   onGoToStore,
-  updateResult,
-  updateStatus,
 }) => {
   const installedApps = apps.filter((app) => {
     const canonicalId = app.appId || app.id;
@@ -91,8 +85,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   onInstallApp={onInstallApp}
                   onUpdateApp={onUpdateApp}
                   onCheckInstalled={onCheckInstalled}
-                  updateResult={updateResult}
-                  updateStatus={updateStatus}
                 />
               );
             })}

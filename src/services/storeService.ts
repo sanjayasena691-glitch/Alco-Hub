@@ -6,7 +6,6 @@
 import {
   EcosystemApp,
   EcosystemPack,
-  UserLicense,
   ContactAlcoConfig,
   SyncMeta,
   AdminAuthSession,
@@ -23,7 +22,6 @@ import { getSupabase, isSupabaseConfigured } from './supabaseClient';
 const STORAGE_KEY_CATALOG_CACHE = 'alco_hub_catalog_cache_v2';
 const STORAGE_KEY_PACKS_CACHE = 'alco_hub_packs_cache_v2';
 const STORAGE_KEY_SYNC_META = 'alco_hub_sync_meta_v2';
-const STORAGE_KEY_USER_LICENSES = 'alco_hub_user_licenses_v2';
 const STORAGE_KEY_CONTACT_CONFIG = 'alco_hub_contact_config_v2';
 const STORAGE_KEY_INSTALLED_VERSIONS = 'alco_hub_installed_versions_v2';
 const STORAGE_KEY_ADMIN_SESSION = 'alco_hub_admin_session_v2';
@@ -1086,76 +1084,8 @@ export const adminSignIn = (email: string, password?: string) => ownerSignIn(ema
 export const adminSignOut = ownerSignOut;
 
 // ==============================================================================
-// 6. USER LICENSES & CONTACT (LOCAL PERSISTENCE)
+// 6. CONTACT CONFIG & CATALOG DEFAULTS (LOCAL PERSISTENCE)
 // ==============================================================================
-
-export function getUserLicenses(): Record<string, UserLicense> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_USER_LICENSES);
-    if (!raw) return {};
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-export function isAppLicensed(app: EcosystemApp, userLicenses: Record<string, UserLicense>): boolean {
-  if (app.pricingType === 'free') return true;
-  if (app.pricingType === 'coming-soon' || app.comingSoon) return false;
-
-  const license = userLicenses[app.id] || (app.appId ? userLicenses[app.appId] : undefined);
-  return Boolean(license && license.status === 'active');
-}
-
-export function activateLicense(
-  appId: string,
-  licenseKey: string,
-  licensedTo: string = 'Authorized ALCO User'
-): { success: boolean; message: string } {
-  const cleanKey = licenseKey.trim().toUpperCase();
-  if (!cleanKey) {
-    return { success: false, message: 'License key tidak boleh kosong.' };
-  }
-
-  const isValidFormat = cleanKey.startsWith('ALCO-') && cleanKey.length >= 12;
-  if (!isValidFormat) {
-    return {
-      success: false,
-      message: 'Format License Key tidak valid. Contoh format resmi: ALCO-CREA-9821-4321',
-    };
-  }
-
-  const licenses = getUserLicenses();
-  licenses[appId] = {
-    appId,
-    licenseKey: cleanKey,
-    licensedTo,
-    activatedAt: new Date().toISOString(),
-    status: 'active',
-    tier: 'Lifetime License',
-  };
-
-  try {
-    localStorage.setItem(STORAGE_KEY_USER_LICENSES, JSON.stringify(licenses));
-    return { success: true, message: 'Lisensi resmi berhasil diaktifkan!' };
-  } catch {
-    return { success: false, message: 'Gagal menyimpan lisensi ke storage lokal.' };
-  }
-}
-
-export function revokeLicense(appId: string): void {
-  const licenses = getUserLicenses();
-  delete licenses[appId];
-  localStorage.setItem(STORAGE_KEY_USER_LICENSES, JSON.stringify(licenses));
-}
-
-export function generateLicenseKey(appId: string): string {
-  const prefix = appId.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 4) || 'APP';
-  const part1 = Math.random().toString(36).substring(2, 6).toUpperCase();
-  const part2 = Math.random().toString(36).substring(2, 6).toUpperCase();
-  const part3 = Math.floor(1000 + Math.random() * 9000);
-  return `ALCO-${prefix}-${part1}-${part2}-${part3}`;
-}
 
 export function getContactConfig(): ContactAlcoConfig {
   try {
@@ -1167,18 +1097,47 @@ export function getContactConfig(): ContactAlcoConfig {
   }
 }
 
-function saveContactConfigLocal(config: ContactAlcoConfig): void {
+export function saveContactConfigLocal(config: ContactAlcoConfig): void {
   localStorage.setItem(STORAGE_KEY_CONTACT_CONFIG, JSON.stringify(config));
-}
-
-export function createWhatsAppOrderLink(app: EcosystemApp, contact: ContactAlcoConfig): string {
-  const defaultMsg = contact.defaultPurchaseMessage || 'Halo Aladzan Corpora, saya ingin membeli/mengaktifkan Lisensi Resmi untuk aplikasi:';
-  const message = `${defaultMsg}\n\n*Aplikasi:* ${app.name}\n*App ID:* ${app.appId || app.id}\n*Fungsi:* ${app.functionLabel}\n*Harga/Paket:* ${app.priceLabel || 'Lisensi Resmi'}\n\nMohon informasi prosedur aktivasi lisensi ALCO Hub saya. Terima kasih!`;
-  const cleanPhone = contact.whatsappNumber.replace(/[^0-9]/g, '');
-  return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
 }
 
 export function resetCatalogToDefault(): EcosystemApp[] {
   saveCatalogToCache(DEFAULT_APPS);
   return DEFAULT_APPS;
 }
+
+/**
+ * Membersihkan cache lama / stale keys dari versi sebelumnya (v1 / legacy licenses)
+ */
+export function purgeLegacyStorageKeys(): void {
+  const legacyKeys = [
+    'alco_hub_user_licenses_v1',
+    'alco_hub_user_licenses_v2',
+    'alco_hub_catalog_cache_v1',
+    'alco_hub_packs_cache_v1',
+    'alco_hub_sync_meta_v1',
+    'alco_hub_contact_config_v1',
+    'alco_hub_admin_session_v1',
+  ];
+  legacyKeys.forEach((key) => {
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  });
+}
+
+/**
+ * Reset and clear local catalog cache completely
+ */
+export function clearCatalogCache(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY_CATALOG_CACHE);
+    localStorage.removeItem(STORAGE_KEY_PACKS_CACHE);
+    localStorage.removeItem(STORAGE_KEY_SYNC_META);
+    inMemoryCatalog = null;
+    inMemoryPacks = null;
+  } catch (e) {
+    console.warn('Failed to clear catalog cache:', e);
+  }
+}
+

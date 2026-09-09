@@ -18,8 +18,6 @@ import {
 import {
   EcosystemApp,
   EcosystemPack,
-  ContentEngineUpdateResult,
-  ContentEngineUpdateStatus,
   NavigationTab,
   AppLocalInstallation,
   AppInstallProgress,
@@ -27,6 +25,7 @@ import {
 import { ApplicationCard } from './ApplicationCard';
 import { PackCard } from './PackCard';
 import { AlcoNavigator } from './AlcoNavigator';
+import { AppIcon } from './AppIcon';
 
 interface HomeViewProps {
   coreApps: EcosystemApp[];
@@ -38,10 +37,9 @@ interface HomeViewProps {
   onOpenApp: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
   onUpdateApp: (app: EcosystemApp) => void;
+  onCheckInstalled?: (appId: string) => Promise<boolean> | void;
   onExplorePack: (pack: EcosystemPack) => void;
   onNavigateTab: (tab: NavigationTab) => void;
-  updateResult: ContentEngineUpdateResult | null;
-  updateStatus: ContentEngineUpdateStatus;
   apiKey: string;
   onRequestApiKey: () => void;
 }
@@ -56,10 +54,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenApp,
   onInstallApp,
   onUpdateApp,
+  onCheckInstalled,
   onExplorePack,
   onNavigateTab,
-  updateResult,
-  updateStatus,
   apiKey,
   onRequestApiKey,
 }) => {
@@ -109,8 +106,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
             className="p-5 sm:p-6 rounded-xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg shadow-black/20"
           >
             <div className="flex items-center gap-4 min-w-0">
-              <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0 shadow-inner">
-                <Sparkles className="w-6 h-6" />
+              <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 flex items-center justify-center shrink-0 shadow-inner overflow-hidden">
+                <AppIcon
+                  iconUrl={recentApp.iconUrl}
+                  iconName={recentApp.iconName}
+                  name={recentApp.name}
+                  iconClassName="w-6 h-6"
+                />
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -175,8 +177,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 onOpenApp={onOpenApp}
                 onInstallApp={onInstallApp}
                 onUpdateApp={onUpdateApp}
-                updateResult={updateResult}
-                updateStatus={updateStatus}
+                onCheckInstalled={onCheckInstalled}
               />
             );
           })}

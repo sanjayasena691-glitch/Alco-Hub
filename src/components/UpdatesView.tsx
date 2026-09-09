@@ -9,24 +9,20 @@ import {
   CheckCircle2,
   AlertCircle,
   Download,
-  Sparkles,
-  ExternalLink,
   RotateCw,
 } from 'lucide-react';
 import {
   EcosystemApp,
-  ContentEngineUpdateResult,
-  ContentEngineUpdateStatus,
   AppLocalInstallation,
   AppInstallProgress,
 } from '../types';
+import { AppIcon } from './AppIcon';
 
 interface UpdatesViewProps {
   apps: EcosystemApp[];
   localInstallations?: Record<string, AppLocalInstallation>;
   installProgressMap?: Record<string, AppInstallProgress>;
-  updateResult: ContentEngineUpdateResult | null;
-  updateStatus: ContentEngineUpdateStatus;
+  isCheckingUpdates?: boolean;
   onCheckUpdate: () => void;
   onPerformUpdate: (app: EcosystemApp) => void;
   onInstallApp?: (app: EcosystemApp) => void;
@@ -36,8 +32,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
   apps,
   localInstallations = {},
   installProgressMap = {},
-  updateResult,
-  updateStatus,
+  isCheckingUpdates = false,
   onCheckUpdate,
   onPerformUpdate,
   onInstallApp,
@@ -49,10 +44,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
     const canonicalId = app.appId || app.id;
     const inst = localInstallations[canonicalId] || localInstallations[app.id];
     const localVer = inst?.version || app.version;
-    return (
-      (app.latestVersion && localVer && app.latestVersion !== localVer) ||
-      (app.id === 'content-engine' && updateStatus === 'update-available')
-    );
+    return Boolean(app.latestVersion && localVer && app.latestVersion !== localVer);
   });
 
   const handleUpdate = (app: EcosystemApp) => {
@@ -87,11 +79,11 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
           id="manual-check-all-updates-btn"
           type="button"
           onClick={onCheckUpdate}
-          disabled={updateStatus === 'checking'}
+          disabled={isCheckingUpdates}
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all shadow-md shrink-0 disabled:opacity-50"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${updateStatus === 'checking' ? 'animate-spin text-indigo-400' : ''}`} />
-          <span>{updateStatus === 'checking' ? 'Memeriksa Server...' : 'Periksa Update'}</span>
+          <RefreshCw className={`w-3.5 h-3.5 ${isCheckingUpdates ? 'animate-spin text-indigo-400' : ''}`} />
+          <span>{isCheckingUpdates ? 'Memeriksa Server...' : 'Periksa Update'}</span>
         </button>
       </div>
 
@@ -122,9 +114,18 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
                   className="p-6 rounded-2xl bg-slate-900 border border-amber-500/30 shadow-xl shadow-amber-500/5 space-y-4"
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-base font-bold text-white">{app.name}</h3>
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-lg bg-slate-800 border border-slate-700/80 flex items-center justify-center shrink-0 overflow-hidden text-indigo-400 mt-0.5">
+                        <AppIcon
+                          iconUrl={app.iconUrl}
+                          iconName={app.iconName}
+                          name={app.name}
+                          iconClassName="w-5 h-5"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-bold text-white">{app.name}</h3>
                         <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">
                           Update Available
                         </span>
@@ -133,6 +134,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
                       <p className="text-xs font-mono text-slate-300 pt-1">
                         Versi Saat Ini: <span className="text-slate-400 font-semibold">v{app.version}</span> → Versi Baru: <span className="text-emerald-400 font-bold">v{app.latestVersion}</span>
                       </p>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
