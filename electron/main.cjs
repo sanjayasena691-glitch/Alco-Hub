@@ -531,9 +531,20 @@ ipcMain.handle('check-app-installed', async (_event, appId) => {
   const appDefinition = getAppDefinition(appId);
   const executablePath = resolveDesktopAppExecutable(appDefinition);
   if (!executablePath) {
+    console.log('[ALCO Status Audit]', {
+      'TARGET APP': appDefinition.label || appId,
+      'INSTALLED VERSION AFTER': 'NOT_FOUND',
+      'EXECUTABLE PATH': 'NONE',
+    });
     return { isInstalled: false, version: null, executablePath: null };
   }
   const localVersion = getLocalAppVersion(appDefinition, executablePath);
+  console.log('[ALCO Status Audit]', {
+    'TARGET APP': appDefinition.label || appId,
+    'INSTALLED VERSION AFTER': localVersion.version || 'UNKNOWN',
+    'EXECUTABLE PATH': executablePath,
+    'VERSION SOURCE': localVersion.source || 'NONE',
+  });
   return {
     isInstalled: true,
     version: localVersion.version,
@@ -1054,30 +1065,67 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
   } catch {}
   const tempDownloadPath = path.join(tempDir, `${sanitizedAppId}-${Date.now()}.download.tmp`);
 
+  // Diagnostic Audit: Determine installed state before installation
+  const beforeExePath = resolveDesktopAppExecutable(appDefinition);
+  const beforeVersionInfo = beforeExePath ? getLocalAppVersion(appDefinition, beforeExePath) : { version: null };
+  const installedVersionBefore = beforeVersionInfo.version || 'NOT_INSTALLED';
+
+  console.log('[ALCO Installer Audit - Start]', {
+    'TARGET APP': appDefinition.label || appId,
+    'TARGET EXE': (appDefinition.executableNames || []).join(', '),
+    'INSTALLED VERSION BEFORE': installedVersionBefore,
+    'INSTALLER CACHE PATH': cachedInstallerPath,
+  });
+
   try {
     // =========================================================================
     // STEP 1: Check Reusable Local Installer Cache
     // =========================================================================
-    if (!forceRedownload && fs.existsSync(cachedInstallerPath)) {
+    let cacheStatus = 'CACHE MISS';
+    let cacheMissReason = 'FILE_NOT_FOUND';
+
+    if (forceRedownload) {
+      cacheMissReason = 'FORCE_REDOWNLOAD_REQUESTED';
+    } else if (fs.existsSync(cachedInstallerPath)) {
       sendProgress('verifying', 100, 0, 0, 'Memeriksa cache installer lokal yang tersedia...');
       const cachedHash = await calculateFileSha256(cachedInstallerPath);
 
       if (cachedHash.toLowerCase() === cleanExpectedHash) {
-        console.log(`[Electron Installer Cache] Reusing valid local installer: ${cachedInstallerPath}`);
+        cacheStatus = 'CACHE HIT';
+        console.log('[ALCO Installer Audit - Cache]', {
+          'CACHE HIT / MISS': 'CACHE HIT',
+          'INSTALLER CACHE PATH': cachedInstallerPath,
+          'SHA256 MATCH': true,
+        });
+
         sendProgress('installer-ready', 100, 0, 0, `Installer v${cleanVersion} siap dipasang (menggunakan cache lokal).`, '', {
           fromCache: true,
           installerPath: cachedInstallerPath,
         });
 
         // STEP 1b: Check & Close Running Old App Process Safely
-        const isRunning = await isTargetAppRunning(appDefinition);
-        if (isRunning) {
+        const runningBefore = await isTargetAppRunning(appDefinition);
+        let closeResult = { success: true, closed: false };
+        let runningAfter = runningBefore;
+
+        if (runningBefore) {
           sendProgress('closing-app', 100, 0, 0, `Menutup proses ${appDefinition.label} yang sedang aktif...`);
-          await closeTargetAppProcess(appDefinition);
+          closeResult = await closeTargetAppProcess(appDefinition);
+          runningAfter = await isTargetAppRunning(appDefinition);
         }
+
+        console.log('[ALCO Installer Audit - Process Control (Cache Hit)]', {
+          'TARGET APP': appDefinition.label,
+          'RUNNING BEFORE CLOSE': runningBefore,
+          'CLOSE RESULT': closeResult.success ? 'SUCCESS' : 'FAILED',
+          'RUNNING AFTER CLOSE': runningAfter,
+        });
 
         // STEP 1c: Launch Installer
         sendProgress('launching-installer', 100, 0, 0, 'Membuka installer Windows Setup...');
+        let launchSuccess = false;
+        let launchError = null;
+
         try {
           if (process.platform === 'win32') {
             const child = spawn(cachedInstallerPath, [], {
@@ -1085,15 +1133,26 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
               stdio: 'ignore',
             });
             child.unref();
+            launchSuccess = true;
           } else {
-            await shell.openPath(cachedInstallerPath);
+            const openErr = await shell.openPath(cachedInstallerPath);
+            if (openErr) throw new Error(openErr);
+            launchSuccess = true;
           }
         } catch (spawnErr) {
+          launchError = spawnErr?.message || String(spawnErr);
           const openErr = await shell.openPath(cachedInstallerPath);
           if (openErr) {
             throw new Error(`Gagal membuka installer: ${spawnErr?.message || openErr}`);
           }
+          launchSuccess = true;
         }
+
+        console.log('[ALCO Installer Audit - Launch (Cache Hit)]', {
+          'INSTALLER LAUNCH RESULT': launchSuccess ? 'SUCCESS' : 'FAILED',
+          'LAUNCH ERROR': launchError || 'NONE',
+          'INSTALLED VERSION BEFORE': installedVersionBefore,
+        });
 
         sendProgress('installer-opened', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.', '', {
           fromCache: true,
@@ -1107,11 +1166,17 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
           message: 'Installer lokal berhasil diverifikasi dan dijalankan.',
         };
       } else {
-        // Corrupted/Stale Cache: Invalidate and delete
-        console.log(`[Electron Installer Cache] Checksum mismatch in cache. Deleting stale file.`);
+        cacheMissReason = 'SHA_MISMATCH';
+        console.log(`[ALCO Installer Audit - Cache] Checksum mismatch in cache. Deleting stale file.`);
         try { fs.unlinkSync(cachedInstallerPath); } catch {}
       }
     }
+
+    console.log('[ALCO Installer Audit - Cache]', {
+      'CACHE HIT / MISS': 'CACHE MISS',
+      'REASON': cacheMissReason,
+      'INSTALLER CACHE PATH': cachedInstallerPath,
+    });
 
     // =========================================================================
     // STEP 2: Resolve Release Asset from GitHub
@@ -1242,16 +1307,29 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
     // =========================================================================
     // STEP 6: Check & Close Running Old App Process Safely
     // =========================================================================
-    const isRunning = await isTargetAppRunning(appDefinition);
-    if (isRunning) {
+    const runningBeforeFresh = await isTargetAppRunning(appDefinition);
+    let closeResultFresh = { success: true, closed: false };
+    let runningAfterFresh = runningBeforeFresh;
+
+    if (runningBeforeFresh) {
       sendProgress('closing-app', 100, 0, 0, `Menutup proses ${appDefinition.label} yang sedang aktif...`);
-      await closeTargetAppProcess(appDefinition);
+      closeResultFresh = await closeTargetAppProcess(appDefinition);
+      runningAfterFresh = await isTargetAppRunning(appDefinition);
     }
+
+    console.log('[ALCO Installer Audit - Process Control (Fresh Download)]', {
+      'TARGET APP': appDefinition.label,
+      'RUNNING BEFORE CLOSE': runningBeforeFresh,
+      'CLOSE RESULT': closeResultFresh.success ? 'SUCCESS' : 'FAILED',
+      'RUNNING AFTER CLOSE': runningAfterFresh,
+    });
 
     // =========================================================================
     // STEP 7: Launch Installer
     // =========================================================================
     sendProgress('launching-installer', 100, 0, 0, 'Membuka installer Windows Setup...');
+    let launchSuccessFresh = false;
+    let launchErrorFresh = null;
 
     try {
       if (process.platform === 'win32') {
@@ -1260,15 +1338,26 @@ ipcMain.handle('download-and-install-app', async (event, params) => {
           stdio: 'ignore',
         });
         child.unref();
+        launchSuccessFresh = true;
       } else {
-        await shell.openPath(cachedInstallerPath);
+        const openErr = await shell.openPath(cachedInstallerPath);
+        if (openErr) throw new Error(openErr);
+        launchSuccessFresh = true;
       }
     } catch (spawnErr) {
+      launchErrorFresh = spawnErr?.message || String(spawnErr);
       const openErr = await shell.openPath(cachedInstallerPath);
       if (openErr) {
         throw new Error(`Gagal membuka installer: ${spawnErr?.message || openErr}`);
       }
+      launchSuccessFresh = true;
     }
+
+    console.log('[ALCO Installer Audit - Launch (Fresh Download)]', {
+      'INSTALLER LAUNCH RESULT': launchSuccessFresh ? 'SUCCESS' : 'FAILED',
+      'LAUNCH ERROR': launchErrorFresh || 'NONE',
+      'INSTALLED VERSION BEFORE': installedVersionBefore,
+    });
 
     sendProgress('installer-opened', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.', '', {
       fromCache: true,
