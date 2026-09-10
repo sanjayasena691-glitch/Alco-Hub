@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus,
   Lock,
@@ -17,6 +17,13 @@ import {
   TrendingUp,
   Layout,
   Search,
+  UploadCloud,
+  Loader2,
+  Trash2,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
 } from 'lucide-react';
 import {
   EcosystemApp,
@@ -27,6 +34,13 @@ import {
   ProductIconName,
 } from '../../types';
 import { sanitizeAppId, normalizeVersion } from '../../utils/versioning';
+import {
+  uploadAppIconToStorage,
+  validateIconFile,
+  MAX_ICON_SIZE_BYTES,
+  BUCKET_APP_ICONS,
+} from '../../services/iconStorageService';
+import { AppIcon } from '../AppIcon';
 
 interface AppRegistrationFormProps {
   initialApp?: EcosystemApp | null;
@@ -58,6 +72,11 @@ export const AppRegistrationForm: React.FC<AppRegistrationFormProps> = ({
   const [iconName, setIconName] = useState<ProductIconName>(initialApp?.iconName || 'target');
   const [iconUrl, setIconUrl] = useState(initialApp?.iconUrl || '');
   const [previewError, setPreviewError] = useState(false);
+  const [isUploadingIcon, setIsUploadingIcon] = useState(false);
+  const [iconUploadError, setIconUploadError] = useState<string | null>(null);
+  const [iconUploadSuccess, setIconUploadSuccess] = useState(false);
+  const [showManualIconUrl, setShowManualIconUrl] = useState(Boolean(initialApp?.iconUrl));
+  const iconFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setPreviewError(false);
@@ -118,6 +137,68 @@ export const AppRegistrationForm: React.FC<AppRegistrationFormProps> = ({
       setShowQuickPackModal(true);
     } else {
       setPackId(val);
+    }
+  };
+
+  const handleTriggerUploadIcon = () => {
+    const effectiveId = appId.trim() || sanitizeAppId(name);
+    if (!effectiveId) {
+      setIconUploadError('Isi Nama Aplikasi atau App ID terlebih dahulu sebelum mengunggah icon.');
+      return;
+    }
+    setIconUploadError(null);
+    iconFileInputRef.current?.click();
+  };
+
+  const handleIconFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const effectiveId = appId.trim() || sanitizeAppId(name);
+    if (!effectiveId) {
+      setIconUploadError('Isi Nama Aplikasi atau App ID terlebih dahulu sebelum mengunggah icon.');
+      if (iconFileInputRef.current) iconFileInputRef.current.value = '';
+      return;
+    }
+
+    const validation = validateIconFile(file);
+    if (!validation.valid) {
+      setIconUploadError(validation.error || 'Format atau ukuran file icon tidak sesuai.');
+      if (iconFileInputRef.current) iconFileInputRef.current.value = '';
+      return;
+    }
+
+    setIconUploadError(null);
+    setIsUploadingIcon(true);
+    setIconUploadSuccess(false);
+
+    try {
+      const res = await uploadAppIconToStorage(effectiveId, file);
+      if (res.success && res.publicUrl) {
+        setIconUrl(res.publicUrl);
+        setIconUploadSuccess(true);
+        setPreviewError(false);
+        setTimeout(() => setIconUploadSuccess(false), 5000);
+      } else {
+        setIconUploadError(res.error || 'Gagal mengunggah icon ke Supabase Storage.');
+      }
+    } catch (err: any) {
+      setIconUploadError(err?.message || 'Terjadi kesalahan sistem saat mengunggah file icon.');
+    } finally {
+      setIsUploadingIcon(false);
+      if (iconFileInputRef.current) {
+        iconFileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleClearIcon = () => {
+    setIconUrl('');
+    setIconUploadError(null);
+    setIconUploadSuccess(false);
+    setPreviewError(false);
+    if (iconFileInputRef.current) {
+      iconFileInputRef.current.value = '';
     }
   };
 
@@ -445,76 +526,160 @@ export const AppRegistrationForm: React.FC<AppRegistrationFormProps> = ({
                 <option value="shield">Shield (Security & Core)</option>
               </select>
             </div>
-
-            {/* Official Icon URL input */}
-            <div className="space-y-1 sm:col-span-2">
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <ImageIcon className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                  <span>Official Application Icon URL (PNG / SVG / WebP)</span>
-                </span>
-                <span className="text-[10px] text-slate-500">
-                  CDN / GitHub raw / Supabase Storage URL
-                </span>
-              </label>
-              <input
-                type="url"
-                value={iconUrl}
-                onChange={(e) => setIconUrl(e.target.value)}
-                placeholder="contoh: https://raw.githubusercontent.com/.../icon.png atau https://...supabase.co/storage/v1/..."
-                className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white font-mono focus:outline-none focus:border-indigo-500"
-              />
-              <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                Icon resmi yang akan tampil di kartu aplikasi, Store, dan Library ALCO Hub. Jika kosong atau gagal dimuat, sistem otomatis fallback ke icon simbol Lucide.
-              </p>
-            </div>
           </div>
 
-          {/* Live Icon Preview Box */}
-          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700/80 flex items-center justify-center shrink-0 overflow-hidden shadow-sm">
-              {iconUrl && !previewError ? (
-                <img
-                  src={iconUrl}
-                  alt="App Icon Preview"
-                  onError={() => setPreviewError(true)}
-                  className="w-full h-full object-contain p-1.5"
-                />
-              ) : (
-                <div className="text-indigo-600 dark:text-indigo-400">
-                  {iconName === 'target' && <Target className="w-6 h-6" />}
-                  {iconName === 'sparkles' && <Sparkles className="w-6 h-6" />}
-                  {iconName === 'video' && <Video className="w-6 h-6" />}
-                  {iconName === 'package' && <Package className="w-6 h-6" />}
-                  {iconName === 'trending-up' && <TrendingUp className="w-6 h-6" />}
-                  {iconName === 'layout' && <Layout className="w-6 h-6" />}
-                  {iconName === 'search' && <Search className="w-6 h-6" />}
-                  {iconName === 'shield' && <ShieldCheck className="w-6 h-6" />}
+          {/* Official App Icon Card (Supabase Storage Direct Upload + Preview) */}
+          <div className="p-4 rounded-xl bg-slate-50/80 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-3.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-200/80 dark:border-slate-800/80">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                  <ImageIcon className="w-3.5 h-3.5" />
                 </div>
-              )}
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>Official Application Icon</span>
+                    <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 px-1.5 py-0.2 rounded">
+                      Supabase Storage: {BUCKET_APP_ICONS}
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Unggah icon resmi aplikasi (PNG / WEBP, maks. 2 MB) langsung ke cloud storage ALCO.
+                  </p>
+                </div>
+              </div>
+
+              {/* Upload & Action Buttons */}
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Hidden Native File Input */}
+                <input
+                  ref={iconFileInputRef}
+                  type="file"
+                  accept=".png,.webp,image/png,image/webp"
+                  onChange={handleIconFileChange}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={handleTriggerUploadIcon}
+                  disabled={isUploadingIcon}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white shadow-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isUploadingIcon ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Mengunggah...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      <span>{iconUrl ? 'Ganti Icon' : 'Upload Icon'}</span>
+                    </>
+                  )}
+                </button>
+
+                {iconUrl && (
+                  <button
+                    type="button"
+                    onClick={handleClearIcon}
+                    title="Hapus icon kustom dan gunakan simbol fallback"
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 border border-slate-200 dark:border-slate-800 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowManualIconUrl(!showManualIconUrl)}
+                  className="text-[11px] font-medium text-slate-500 hover:text-slate-900 dark:hover:text-white px-2 py-1 rounded border border-transparent hover:border-slate-200 dark:hover:border-slate-800 flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <span>Manual URL</span>
+                  {showManualIconUrl ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+              </div>
             </div>
 
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-900 dark:text-white">Pratinjau Icon Aplikasi</span>
-                {iconUrl && !previewError ? (
-                  <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-2 py-0.5 rounded">
-                    Official Icon Valid
-                  </span>
-                ) : iconUrl && previewError ? (
-                  <span className="text-[10px] font-semibold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 px-2 py-0.5 rounded">
-                    Gagal Dimuat (Fallback Aktif)
-                  </span>
-                ) : (
-                  <span className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 bg-slate-200/60 dark:bg-slate-800 px-2 py-0.5 rounded">
-                    Default Lucide Icon
-                  </span>
-                )}
+            {/* Error & Success Feedback Alerts */}
+            {iconUploadError && (
+              <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 text-xs text-rose-700 dark:text-rose-400 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1">
+                  <span className="font-semibold block">Gagal Mengunggah Icon</span>
+                  <span>{iconUploadError}</span>
+                </div>
               </div>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 truncate">
-                {name || 'Nama Aplikasi'} • Aksen: <span className="capitalize text-slate-800 dark:text-slate-300 font-medium">{accent}</span>
-              </p>
+            )}
+
+            {iconUploadSuccess && (
+              <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span className="font-semibold">Icon berhasil diunggah ke Supabase Storage & tersambung ke aplikasi!</span>
+              </div>
+            )}
+
+            {/* Live Icon Preview & Info Box */}
+            <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 flex items-center gap-4">
+              <div className="w-14 h-14 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0 overflow-hidden shadow-sm">
+                <AppIcon
+                  iconUrl={iconUrl}
+                  iconName={iconName}
+                  name={name || 'App Icon'}
+                  className="w-full h-full object-contain p-2"
+                  iconClassName="w-7 h-7 text-indigo-600 dark:text-indigo-400"
+                />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-slate-900 dark:text-white">
+                    {name || 'Nama Aplikasi'}
+                  </span>
+                  {iconUrl && !previewError ? (
+                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-2 py-0.5 rounded flex items-center gap-1">
+                      <Check className="w-3 h-3" />
+                      <span>Official Storage Icon Aktif</span>
+                    </span>
+                  ) : iconUrl && previewError ? (
+                    <span className="text-[10px] font-semibold text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 px-2 py-0.5 rounded flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      <span>URL Gagal Dimuat (Fallback Simbol Aktif)</span>
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded">
+                      Fallback Lucide: {iconName}
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 truncate">
+                  {iconUrl ? (
+                    <span className="font-mono text-[10px] text-slate-600 dark:text-slate-300">
+                      {iconUrl}
+                    </span>
+                  ) : (
+                    <span>Belum ada icon resmi yang diunggah. Klik tombol "Upload Icon" di atas.</span>
+                  )}
+                </p>
+              </div>
             </div>
+
+            {/* Manual URL Input (Collapsible / Advanced Mode) */}
+            {showManualIconUrl && (
+              <div className="pt-2 border-t border-slate-200/80 dark:border-slate-800/80 space-y-1">
+                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                  <span>Manual Icon URL (CDN / Custom Storage)</span>
+                  <span className="text-[10px] text-slate-500 font-normal">Opsional • Terisi otomatis setelah upload</span>
+                </label>
+                <input
+                  type="url"
+                  value={iconUrl}
+                  onChange={(e) => setIconUrl(e.target.value)}
+                  placeholder="https://...supabase.co/storage/v1/object/public/app-icons/..."
+                  className="w-full px-3.5 py-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-white font-mono focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            )}
           </div>
         </div>
 
