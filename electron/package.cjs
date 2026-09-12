@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
 const staging = path.join(root, '.electron-build');
 const output = path.join(root, 'dist-electron');
-const iconSource = path.join(root, 'Icon Alco Hub.ico');
+const iconSource = path.join(root, 'ALCO-Hub.ico');
 const iconStaging = path.join(staging, 'icon.ico');
 
 fs.rmSync(staging, { recursive: true, force: true });

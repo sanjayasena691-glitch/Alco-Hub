@@ -44,6 +44,7 @@ import {
   subscribeToInstallProgress,
   launchDesktopApp,
 } from './services/installerService';
+import { isAppUpdateAvailable, compareSemver } from './utils/versioning';
 import { getSupabase } from './services/supabaseClient';
 
 import { HeaderNav } from './components/HeaderNav';
@@ -126,30 +127,38 @@ export default function App() {
 
       // If installer executed or ready, trigger a background poll to detect newly installed executable
       if (progress.status === 'ready-to-install' || progress.status === 'installer-opened') {
+        const canonicalProgId = (progress.appId || '').toLowerCase().trim();
         const interval = setInterval(async () => {
-          const info = await checkAppInstallation(progress.appId);
+          const info = await checkAppInstallation(canonicalProgId);
           if (info.isInstalled) {
             setLocalInstallations((prev) => ({
               ...prev,
+              [canonicalProgId]: info,
               [progress.appId]: info,
             }));
             setInstallProgressMap((prev) => {
               const copy = { ...prev };
+              delete copy[canonicalProgId];
               delete copy[progress.appId];
               return copy;
             });
             clearInterval(interval);
           }
-        }, 3000);
+        }, 2500);
 
         // After 180s of waiting without executable detected, transition to waiting-completion state with Check Again button
         setTimeout(() => {
           clearInterval(interval);
           setInstallProgressMap((prev) => {
-            const current = prev[progress.appId];
+            const current = prev[canonicalProgId] || prev[progress.appId];
             if (current && (current.status === 'installer-opened' || current.status === 'ready-to-install')) {
               return {
                 ...prev,
+                [canonicalProgId]: {
+                  ...current,
+                  status: 'waiting-completion',
+                  message: 'Menunggu instalasi selesai. Silakan klik Check Again saat setup selesai.',
+                },
                 [progress.appId]: {
                   ...current,
                   status: 'waiting-completion',
@@ -258,21 +267,24 @@ export default function App() {
     });
 
     if (result.success) {
+      const canonicalId = (appId || '').toLowerCase().trim();
       // Recheck installation after installer execution
       setTimeout(async () => {
-        const info = await checkAppInstallation(appId);
+        const info = await checkAppInstallation(canonicalId);
         if (info.isInstalled) {
           setLocalInstallations((prev) => ({
             ...prev,
+            [canonicalId]: info,
             [appId]: info,
           }));
           setInstallProgressMap((prev) => {
             const copy = { ...prev };
+            delete copy[canonicalId];
             delete copy[appId];
             return copy;
           });
         }
-      }, 5000);
+      }, 4000);
     }
   };
 
@@ -366,7 +378,7 @@ export default function App() {
   const hasAnyUpdate = apps.some((app) => {
     const canonicalId = app.appId || app.id;
     const inst = localInstallations[canonicalId] || localInstallations[app.id];
-    return Boolean(inst?.isInstalled && app.latestVersion && inst.version && app.latestVersion !== inst.version);
+    return isAppUpdateAvailable(app, inst);
   });
 
   return (

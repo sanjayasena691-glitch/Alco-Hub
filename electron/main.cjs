@@ -236,47 +236,78 @@ function readJsonFile(filePath) {
 }
 
 function buildPackageJsonCandidates(appDefinition, executablePath) {
-  const executableDirectory = executablePath ? path.dirname(executablePath) : null;
-  const packagedCandidates = executableDirectory
+  if (!executablePath) return [];
+  const executableDirectory = path.dirname(executablePath);
+
+  // 1. Packaged application candidates (Strictly scoped to the resolved executable's directory)
+  const packagedCandidates = [
+    path.join(executableDirectory, 'resources', 'app.asar', 'package.json'),
+    path.join(executableDirectory, 'resources', 'app', 'package.json'),
+    path.join(executableDirectory, 'resources', 'app.asar.unpacked', 'package.json'),
+    path.join(executableDirectory, 'package.json'),
+    path.join(executableDirectory, 'resources', 'package.json'),
+  ];
+
+  // 2. Local development build candidates (e.g. dist-electron/win-unpacked)
+  const isDevUnpacked = executableDirectory.toLowerCase().includes('win-unpacked');
+  const devCandidates = isDevUnpacked
     ? [
-        path.join(executableDirectory, 'resources', 'app.asar', 'package.json'),
-        path.join(executableDirectory, 'resources', 'app', 'package.json'),
-        path.join(executableDirectory, 'resources', 'app.asar.unpacked', 'package.json'),
         path.resolve(executableDirectory, '..', '..', 'package.json'),
+        path.resolve(executableDirectory, '..', 'package.json'),
       ]
     : [];
 
+  const envCandidate = process.env[`${appDefinition.envKey}_PACKAGE_JSON`];
+
   return [
-    process.env[`${appDefinition.envKey}_PACKAGE_JSON`],
     ...packagedCandidates,
-    path.resolve(__dirname, '..', '..', appDefinition.projectFolder, 'package.json'),
-    path.resolve(__dirname, '..', '..', 'Alco Ecosystem', appDefinition.projectFolder, 'package.json'),
+    ...devCandidates,
+    envCandidate,
   ].filter(Boolean);
 }
 
 function getLocalAppVersion(appDefinition, executablePath) {
-  const packagePath = getUniqueExistingPaths(buildPackageJsonCandidates(appDefinition, executablePath))
-    .find((candidate) => {
-      const packageJson = readJsonFile(candidate);
-      return typeof packageJson?.version === 'string' && packageJson.version.trim().length > 0;
-    });
-
-  if (!packagePath) {
+  if (!executablePath) {
     return { version: null, source: null };
   }
 
-  const packageJson = readJsonFile(packagePath);
-  return {
-    version: packageJson.version.trim(),
-    source: packagePath,
-  };
+  const candidates = buildPackageJsonCandidates(appDefinition, executablePath);
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        const packageJson = readJsonFile(candidate);
+        if (packageJson && typeof packageJson.version === 'string' && packageJson.version.trim().length > 0) {
+          return {
+            version: packageJson.version.trim(),
+            source: candidate,
+          };
+        }
+      }
+    } catch {
+      // Continue to next candidate
+    }
+  }
+
+  return { version: null, source: null };
 }
 
 function normalizeVersion(version) {
   if (typeof version !== 'string') return null;
   const cleaned = version.trim().replace(/^v/i, '');
   const match = cleaned.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
-  if (!match) return null;
+  if (!match) {
+    // Tolerant parser for versions like "1.0" or "1.0.0.1"
+    const parts = cleaned.split('.');
+    if (parts.length >= 2) {
+      const major = parseInt(parts[0], 10);
+      const minor = parseInt(parts[1], 10);
+      const patch = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+      if (!isNaN(major) && !isNaN(minor) && !isNaN(patch)) {
+        return { major, minor, patch, prerelease: '' };
+      }
+    }
+    return null;
+  }
   return {
     major: Number(match[1]),
     minor: Number(match[2]),
@@ -360,13 +391,17 @@ function fetchJsonWithTimeout(rawUrl, timeoutMs = 5000, redirectCount = 0) {
 }
 
 function createWindow() {
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.ico')
-    : path.resolve(__dirname, '..', 'Icon Alco Hub.png');
+  const iconCandidates = [
+    app.isPackaged ? path.join(process.resourcesPath, 'icon.ico') : null,
+    path.resolve(__dirname, '..', 'ALCO-Hub.ico'),
+    path.resolve(__dirname, '..', 'public', 'alco-hub-icon.png'),
+  ].filter(Boolean);
+
+  const iconPath = iconCandidates.find((candidate) => fs.existsSync(candidate));
 
   const mainWindow = new BrowserWindow({
     title: 'ALCO Hub',
-    icon: fs.existsSync(iconPath) ? iconPath : undefined,
+    icon: iconPath || undefined,
     width: 1100,
     height: 800,
     minWidth: 800,

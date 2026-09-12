@@ -17,6 +17,7 @@ import {
   AppInstallProgress,
 } from '../types';
 import { AppIcon } from './AppIcon';
+import { isAppUpdateAvailable, normalizeVersion, evaluateAppStatus } from '../utils/versioning';
 
 interface UpdatesViewProps {
   apps: EcosystemApp[];
@@ -43,8 +44,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
   const appsWithUpdates = apps.filter((app) => {
     const canonicalId = app.appId || app.id;
     const inst = localInstallations[canonicalId] || localInstallations[app.id];
-    const localVer = inst?.version || app.version;
-    return Boolean(app.latestVersion && localVer && app.latestVersion !== localVer);
+    return isAppUpdateAvailable(app, inst);
   });
 
   const handleUpdate = (app: EcosystemApp) => {
@@ -142,7 +142,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
                         </div>
                         <p className="text-xs text-slate-600 dark:text-slate-400">{app.functionLabel}</p>
                         <p className="text-xs font-mono text-slate-700 dark:text-slate-300 pt-1">
-                          Versi Saat Ini: <span className="text-slate-500 dark:text-slate-400 font-semibold">v{app.version}</span> → Versi Baru: <span className="text-emerald-600 dark:text-emerald-400 font-bold">v{app.latestVersion}</span>
+                          Versi Saat Ini: <span className="text-slate-500 dark:text-slate-400 font-semibold">v{localInstallations[appId]?.version ? normalizeVersion(localInstallations[appId].version!) : normalizeVersion(app.version)}</span> → Versi Baru: <span className="text-emerald-600 dark:text-emerald-400 font-bold">v{normalizeVersion(app.latestVersion)}</span>
                         </p>
                       </div>
                     </div>
@@ -253,18 +253,35 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
           Applications Inventory ({apps.length})
         </h3>
         <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 overflow-hidden divide-y divide-slate-200 dark:divide-slate-800/80">
-          {apps.map((app) => (
-            <div key={app.id} className="p-3.5 flex items-center justify-between text-xs">
-              <div>
-                <span className="font-bold text-slate-900 dark:text-slate-200">{app.name}</span>
-                <span className="text-slate-500 text-[11px] block">{app.functionLabel}</span>
+          {apps.map((app) => {
+            const canonicalId = app.appId || app.id;
+            const inst = localInstallations[canonicalId] || localInstallations[app.id];
+            const evalRes = evaluateAppStatus(app, inst);
+            return (
+              <div key={app.id} className="p-3.5 flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-slate-200">{app.name}</span>
+                  <span className="text-slate-500 text-[11px] block">{app.functionLabel}</span>
+                </div>
+                <div className="text-right">
+                  <span className="font-mono text-slate-700 dark:text-slate-300 font-semibold">
+                    v{evalRes.installedVersion || normalizeVersion(app.version)}
+                  </span>
+                  <span
+                    className={`text-[10px] block font-medium ${
+                      evalRes.status === 'UPDATE_AVAILABLE'
+                        ? 'text-amber-600 dark:text-amber-400 font-bold'
+                        : evalRes.status === 'NOT_INSTALLED'
+                          ? 'text-slate-400 dark:text-slate-500'
+                          : 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                    }`}
+                  >
+                    {evalRes.badgeLabel}
+                  </span>
+                </div>
               </div>
-              <div className="text-right">
-                <span className="font-mono text-slate-700 dark:text-slate-300 font-semibold">v{app.version}</span>
-                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 block font-medium">Up to date</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

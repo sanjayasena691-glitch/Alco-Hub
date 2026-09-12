@@ -131,3 +131,186 @@ export function suggestNextVersion(currentLatest?: string | null): string {
   }
   return bumpPatch(currentLatest);
 }
+
+export type UnifiedAppStatus =
+  | 'NOT_INSTALLED'
+  | 'INSTALLING'
+  | 'WAITING_COMPLETION'
+  | 'INSTALLED_UNKNOWN_VERSION'
+  | 'UP_TO_DATE'
+  | 'LOCAL_VERSION_NEWER'
+  | 'UPDATE_AVAILABLE';
+
+export interface AppStatusEvaluation {
+  status: UnifiedAppStatus;
+  isInstalled: boolean;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  canLaunch: boolean;
+  canInstall: boolean;
+  canUpdate: boolean;
+  badgeLabel: string;
+  badgeType: 'success' | 'warning' | 'info' | 'neutral' | 'busy';
+  description: string;
+}
+
+/**
+ * Single source of truth untuk evaluasi status aplikasi di ALCO Hub.
+ * Menggabungkan metadata Supabase, deteksi binary lokal Electron, dan live installer progress.
+ */
+export function evaluateAppStatus(
+  app: { latestVersion?: string; version?: string; downloadUrl?: string; sha256?: string },
+  installation?: { isInstalled: boolean; version?: string | null; executablePath?: string | null },
+  progress?: { status: string; message?: string }
+): AppStatusEvaluation {
+  const isInstalled = Boolean(installation?.isInstalled);
+  const installedVersion = installation?.version ? normalizeVersion(installation.version) : null;
+  const latestVersion = app?.latestVersion ? normalizeVersion(app.latestVersion) : null;
+
+  // 1. In-flight installation / update progress states
+  if (progress) {
+    if (progress.status === 'waiting-completion' || progress.status === 'installer-opened') {
+      return {
+        status: 'WAITING_COMPLETION',
+        isInstalled,
+        installedVersion,
+        latestVersion,
+        hasUpdate: false,
+        canLaunch: false,
+        canInstall: false,
+        canUpdate: false,
+        badgeLabel: 'Setup Terbuka',
+        badgeType: 'info',
+        description: 'Setup installer sedang terbuka di Windows. Selesaikan wizard instalasi.',
+      };
+    }
+
+    const isBusy = [
+      'downloading',
+      'verifying',
+      'installer-ready',
+      'app-running',
+      'closing-app',
+      'launching-installer',
+    ].includes(progress.status);
+
+    if (isBusy) {
+      return {
+        status: 'INSTALLING',
+        isInstalled,
+        installedVersion,
+        latestVersion,
+        hasUpdate: false,
+        canLaunch: false,
+        canInstall: false,
+        canUpdate: false,
+        badgeLabel: 'Memproses...',
+        badgeType: 'busy',
+        description: progress.message || 'Sedang mengunduh dan menyiapkan instalasi.',
+      };
+    }
+  }
+
+  // 2. Not Installed
+  if (!isInstalled) {
+    return {
+      status: 'NOT_INSTALLED',
+      isInstalled: false,
+      installedVersion: null,
+      latestVersion,
+      hasUpdate: false,
+      canLaunch: false,
+      canInstall: Boolean(app?.downloadUrl && app?.sha256),
+      canUpdate: false,
+      badgeLabel: 'Belum Terpasang',
+      badgeType: 'neutral',
+      description: 'Aplikasi belum terpasang di sistem desktop lokal.',
+    };
+  }
+
+  // 3. Installed, but Version is Unknown or Null
+  if (!installedVersion || !latestVersion) {
+    return {
+      status: 'INSTALLED_UNKNOWN_VERSION',
+      isInstalled: true,
+      installedVersion,
+      latestVersion,
+      hasUpdate: false,
+      canLaunch: true,
+      canInstall: false,
+      canUpdate: false,
+      badgeLabel: installedVersion ? `v${installedVersion}` : 'Terpasang',
+      badgeType: 'neutral',
+      description: 'Aplikasi terpasang di sistem.',
+    };
+  }
+
+  // 4. Compare Semver
+  const cmp = compareSemver(installedVersion, latestVersion);
+
+  if (cmp < 0) {
+    // installedVersion < latestVersion -> UPDATE_AVAILABLE
+    return {
+      status: 'UPDATE_AVAILABLE',
+      isInstalled: true,
+      installedVersion,
+      latestVersion,
+      hasUpdate: true,
+      canLaunch: true,
+      canInstall: false,
+      canUpdate: true,
+      badgeLabel: `Update v${latestVersion}`,
+      badgeType: 'warning',
+      description: `Versi baru v${latestVersion} tersedia (versi saat ini: v${installedVersion}).`,
+    };
+  }
+
+  if (cmp > 0) {
+    // installedVersion > latestVersion -> LOCAL_VERSION_NEWER
+    return {
+      status: 'LOCAL_VERSION_NEWER',
+      isInstalled: true,
+      installedVersion,
+      latestVersion,
+      hasUpdate: false,
+      canLaunch: true,
+      canInstall: false,
+      canUpdate: false,
+      badgeLabel: `v${installedVersion} (Terbaru)`,
+      badgeType: 'info',
+      description: `Versi terpasang (v${installedVersion}) lebih baru dari katalog rilis resmi (v${latestVersion}).`,
+    };
+  }
+
+  // cmp === 0 -> UP_TO_DATE
+  return {
+    status: 'UP_TO_DATE',
+    isInstalled: true,
+    installedVersion,
+    latestVersion,
+    hasUpdate: false,
+    canLaunch: true,
+    canInstall: false,
+    canUpdate: false,
+    badgeLabel: `v${installedVersion} (Up to date)`,
+    badgeType: 'success',
+    description: `Aplikasi telah menggunakan versi terbaru (v${installedVersion}).`,
+  };
+}
+
+/**
+ * Menentukan apakah aplikasi memiliki update resmi yang valid untuk diinstal.
+ * Mengembalikan true HANYA jika installedVersion < latestVersion.
+ */
+export function isAppUpdateAvailable(
+  app: { latestVersion?: string },
+  installation?: { isInstalled: boolean; version?: string | null }
+): boolean {
+  if (!installation?.isInstalled || !installation.version || !app?.latestVersion) {
+    return false;
+  }
+  const installedVer = normalizeVersion(installation.version);
+  const latestVer = normalizeVersion(app.latestVersion);
+  return compareSemver(installedVer, latestVer) < 0;
+}

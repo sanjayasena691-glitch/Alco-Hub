@@ -35,6 +35,7 @@ import {
   AppInstallProgress,
 } from '../types';
 import { AppIcon } from './AppIcon';
+import { evaluateAppStatus } from '../utils/versioning';
 
 interface ApplicationCardProps {
   app: EcosystemApp;
@@ -182,9 +183,8 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   const isBusy = isDownloading || isVerifying || isInstallerReady || isAppRunning || isClosingApp || isLaunching;
   const hasCachedInstaller = Boolean(installProgress?.fromCache || installProgress?.installerPath);
 
-  const hasUpdate =
-    isInstalled &&
-    Boolean(app.latestVersion && installation?.version && app.latestVersion !== installation.version);
+  const statusEval = evaluateAppStatus(app, installation, installProgress);
+  const hasUpdate = statusEval.hasUpdate;
 
   const renderIcon = (name: ProductIconName) => {
     switch (name) {

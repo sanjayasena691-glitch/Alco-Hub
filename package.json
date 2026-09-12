@@ -28,13 +28,13 @@
     ],
     "extraResources": [
       {
-        "from": "Icon Alco Hub.ico",
+        "from": "ALCO-Hub.ico",
         "to": "icon.ico"
       }
     ],
-    "icon": "Icon Alco Hub.ico",
+    "icon": "ALCO-Hub.ico",
     "win": {
-      "icon": "Icon Alco Hub.ico",
+      "icon": "ALCO-Hub.ico",
       "target": [
         {
           "target": "nsis",
