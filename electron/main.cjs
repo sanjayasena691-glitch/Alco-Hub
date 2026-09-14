@@ -422,7 +422,8 @@ function createWindow() {
   const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
 
   if (isDev) {
-    mainWindow.loadURL('http://127.0.0.1:5173');
+    const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:3100';
+    mainWindow.loadURL(devServerUrl);
   } else {
     serveProductionApp()
       .then((port) => mainWindow.loadURL(`http://127.0.0.1:${port}`))

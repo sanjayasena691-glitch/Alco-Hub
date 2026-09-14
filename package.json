@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dist-electron server.js",
     "lint": "tsc --noEmit",
-    "desktop:dev": "concurrently \"vite --host 127.0.0.1 --port 5173 --strictPort\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "desktop:dev": "concurrently \"vite --host 127.0.0.1 --port 3100 --strictPort\" \"wait-on http://127.0.0.1:3100 && electron .\"",
     "desktop:build": "npm run build && node electron/package.cjs"
   },
   "build": {
