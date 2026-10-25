@@ -96,12 +96,12 @@ export async function closeTargetApp(
   if (window.alcoHub && typeof window.alcoHub.closeAppProcess === 'function') {
     try {
       const res = await window.alcoHub.closeAppProcess(canonicalId);
-      return res || { success: true };
+      return res || { success: false, error: 'Status penutupan tidak diketahui.' };
     } catch (err: any) {
       return { success: false, error: err?.message };
     }
   }
-  return { success: true };
+  return { success: false, error: 'Tutup aplikasi secara manual.' };
 }
 
 // Track in-flight installation attempts to prevent redundant duplicate calls
@@ -139,24 +139,25 @@ export async function startAppInstallation(
 
   inFlightInstalls.add(canonicalId);
 
-  // 1. Audit Cache: Ambil metadata cloud terbaru untuk aplikasi ini langsung dari Supabase
-  let freshApp: EcosystemApp | null = null;
   try {
-    freshApp = await fetchFreshAppMetadata(appId);
-  } catch {}
 
-  const activeApp = freshApp || app;
-  const downloadUrl = (activeApp.downloadUrl || app.downloadUrl || '').trim();
-  const sha256 = (activeApp.sha256 || app.sha256 || '').trim();
-  const latestVersion = activeApp.latestVersion || activeApp.version || app.latestVersion || app.version || '1.0.0';
+    // 1. Audit Cache: Ambil metadata cloud terbaru untuk aplikasi ini langsung dari Supabase
+    let freshApp: EcosystemApp | null = null;
+    try {
+      freshApp = await fetchFreshAppMetadata(appId);
+    } catch {}
 
-  try {
+    const activeApp = freshApp || app;
+    const downloadUrl = (activeApp.downloadUrl || '').trim();
+    const sha256 = (activeApp.sha256 || '').trim();
+    const latestVersion = activeApp.latestVersion || activeApp.version || '';
+
     if (!downloadUrl) {
       const errorMsg = 'Download URL installer belum tersedia untuk aplikasi ini di rilis resmi.';
       if (onProgress) {
         onProgress({
           appId,
-          status: 'failed',
+          status: 'UPDATE_FAILED',
           progress: 0,
           bytesReceived: 0,
           totalBytes: 0,
@@ -171,7 +172,7 @@ export async function startAppInstallation(
       if (onProgress) {
         onProgress({
           appId,
-          status: 'failed',
+          status: 'UPDATE_FAILED',
           progress: 0,
           bytesReceived: 0,
           totalBytes: 0,
@@ -186,7 +187,7 @@ export async function startAppInstallation(
       if (onProgress) {
         onProgress({
           appId,
-          status: 'failed',
+          status: 'UPDATE_FAILED',
           progress: 0,
           bytesReceived: 0,
           totalBytes: 0,
@@ -213,7 +214,7 @@ export async function startAppInstallation(
     if (!result.success && result.error && onProgress) {
       onProgress({
         appId,
-        status: 'installation-failed',
+        status: 'UPDATE_FAILED',
         progress: 0,
         bytesReceived: 0,
         totalBytes: 0,
@@ -229,7 +230,7 @@ export async function startAppInstallation(
     if (onProgress) {
       onProgress({
         appId,
-        status: 'installation-failed',
+        status: 'UPDATE_FAILED',
         progress: 0,
         bytesReceived: 0,
         totalBytes: 0,

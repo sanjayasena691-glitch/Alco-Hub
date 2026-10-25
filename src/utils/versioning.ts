@@ -1,3 +1,4 @@
+import { compareVersions, parseVersion } from './upgradeVersion';
 /**
  * ALCO Hub - Semantic Versioning & Tag Utilities
  * Standarisasi sanitasi App ID, format tag GitHub Releases, dan manajemen versi otomatis.
@@ -101,23 +102,7 @@ export function bumpMajor(currentVer: string): string {
  * Return -1 jika v1 < v2
  */
 export function compareSemver(v1: string, v2: string): number {
-  const p1 = parseSemver(v1);
-  const p2 = parseSemver(v2);
-
-  if (!p1 && !p2) return 0;
-  if (!p1) return -1;
-  if (!p2) return 1;
-
-  if (p1.major > p2.major) return 1;
-  if (p1.major < p2.major) return -1;
-
-  if (p1.minor > p2.minor) return 1;
-  if (p1.minor < p2.minor) return -1;
-
-  if (p1.patch > p2.patch) return 1;
-  if (p1.patch < p2.patch) return -1;
-
-  return 0;
+  return compareVersions(v1, v2) ?? Number.NaN;
 }
 
 /**
@@ -133,6 +118,7 @@ export function suggestNextVersion(currentLatest?: string | null): string {
 }
 
 export type UnifiedAppStatus =
+  | 'INSTALLATION_BLOCKED'
   | 'NOT_INSTALLED'
   | 'INSTALLING'
   | 'WAITING_COMPLETION'
@@ -161,12 +147,12 @@ export interface AppStatusEvaluation {
  */
 export function evaluateAppStatus(
   app: { latestVersion?: string; version?: string; downloadUrl?: string; sha256?: string },
-  installation?: { isInstalled: boolean; version?: string | null; executablePath?: string | null },
+  installation?: { isInstalled: boolean; version?: string | null; executablePath?: string | null; discoveryStatus?: string; error?: string },
   progress?: { status: string; message?: string }
 ): AppStatusEvaluation {
   const isInstalled = Boolean(installation?.isInstalled);
-  const installedVersion = installation?.version ? normalizeVersion(installation.version) : null;
-  const latestVersion = app?.latestVersion ? normalizeVersion(app.latestVersion) : null;
+  const installedVersion = installation?.version && parseVersion(installation.version) ? installation.version : null;
+  const latestVersion = app?.latestVersion && parseVersion(app.latestVersion) ? app.latestVersion : null;
 
   // 1. In-flight installation / update progress states
   if (progress) {
@@ -187,6 +173,7 @@ export function evaluateAppStatus(
     }
 
     const isBusy = [
+      'UPDATE_AVAILABLE', 'DOWNLOADING', 'VERIFYING', 'AWAITING_USER_CONFIRMATION', 'CLOSING_APPLICATION', 'INSTALLING', 'VERIFYING_INSTALLATION',
       'downloading',
       'verifying',
       'installer-ready',
@@ -210,6 +197,12 @@ export function evaluateAppStatus(
         description: progress.message || 'Sedang mengunduh dan menyiapkan instalasi.',
       };
     }
+  }
+
+  if (['MULTIPLE_INSTALLATIONS', 'UNSUPPORTED_INSTALLATION'].includes(installation?.discoveryStatus || '')) {
+    return { status: 'INSTALLATION_BLOCKED', isInstalled, installedVersion, latestVersion, hasUpdate: false,
+      canLaunch: false, canInstall: false, canUpdate: false, badgeLabel: 'Periksa Instalasi', badgeType: 'warning',
+      description: installation?.error || 'Lokasi atau identitas instalasi belum dapat dipastikan.' };
   }
 
   // 2. Not Installed
@@ -310,7 +303,7 @@ export function isAppUpdateAvailable(
   if (!installation?.isInstalled || !installation.version || !app?.latestVersion) {
     return false;
   }
-  const installedVer = normalizeVersion(installation.version);
-  const latestVer = normalizeVersion(app.latestVersion);
+  const installedVer = installation.version;
+  const latestVer = app.latestVersion;
   return compareSemver(installedVer, latestVer) < 0;
 }

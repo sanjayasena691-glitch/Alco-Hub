@@ -244,7 +244,10 @@ export interface PublishReleasePayload {
   file: File;
 }
 
+export type UpgradeStatus = 'UPDATE_AVAILABLE' | 'DOWNLOADING' | 'VERIFYING' | 'AWAITING_USER_CONFIRMATION' | 'CLOSING_APPLICATION' | 'INSTALLING' | 'VERIFYING_INSTALLATION' | 'UPDATE_SUCCESS' | 'UPDATE_FAILED';
+
 export type InstallStatus =
+  | UpgradeStatus
   | 'idle'
   | 'downloading'
   | 'verifying'
@@ -284,6 +287,12 @@ export interface AppInstallProgress {
 }
 
 export interface AppLocalInstallation {
+  discoveryStatus?: 'NOT_INSTALLED' | 'INSTALLED_KNOWN_VERSION' | 'INSTALLED_UNKNOWN_VERSION' | 'MULTIPLE_INSTALLATIONS' | 'UNSUPPORTED_INSTALLATION';
+  directory?: string;
+  scope?: 'user' | 'machine';
+  source?: string;
+  appId?: string;
+  error?: string;
   isInstalled: boolean;
   version: string | null;
   executablePath: string | null;

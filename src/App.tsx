@@ -125,51 +125,10 @@ export default function App() {
         [progress.appId]: progress,
       }));
 
-      // If installer executed or ready, trigger a background poll to detect newly installed executable
-      if (progress.status === 'ready-to-install' || progress.status === 'installer-opened') {
-        const canonicalProgId = (progress.appId || '').toLowerCase().trim();
-        const interval = setInterval(async () => {
-          const info = await checkAppInstallation(canonicalProgId);
-          if (info.isInstalled) {
-            setLocalInstallations((prev) => ({
-              ...prev,
-              [canonicalProgId]: info,
-              [progress.appId]: info,
-            }));
-            setInstallProgressMap((prev) => {
-              const copy = { ...prev };
-              delete copy[canonicalProgId];
-              delete copy[progress.appId];
-              return copy;
-            });
-            clearInterval(interval);
-          }
-        }, 2500);
-
-        // After 180s of waiting without executable detected, transition to waiting-completion state with Check Again button
-        setTimeout(() => {
-          clearInterval(interval);
-          setInstallProgressMap((prev) => {
-            const current = prev[canonicalProgId] || prev[progress.appId];
-            if (current && (current.status === 'installer-opened' || current.status === 'ready-to-install')) {
-              return {
-                ...prev,
-                [canonicalProgId]: {
-                  ...current,
-                  status: 'waiting-completion',
-                  message: 'Menunggu instalasi selesai. Silakan klik Check Again saat setup selesai.',
-                },
-                [progress.appId]: {
-                  ...current,
-                  status: 'waiting-completion',
-                  message: 'Menunggu instalasi selesai. Silakan klik Check Again saat setup selesai.',
-                },
-              };
-            }
-            return prev;
-          });
-        }, 180000);
+      if (progress.status === 'UPDATE_SUCCESS') {
+        checkAppInstallation(progress.appId).then(info => setLocalInstallations(prev => ({ ...prev, [progress.appId]: info })));
       }
+
     });
 
     // Listen to Supabase Auth changes (signOut / token refresh)
@@ -252,7 +211,7 @@ export default function App() {
       ...prev,
       [appId]: {
         appId,
-        status: 'downloading',
+        status: 'DOWNLOADING',
         progress: 0,
         bytesReceived: 0,
         totalBytes: 0,
@@ -266,26 +225,11 @@ export default function App() {
       }));
     });
 
-    if (result.success) {
-      const canonicalId = (appId || '').toLowerCase().trim();
-      // Recheck installation after installer execution
-      setTimeout(async () => {
-        const info = await checkAppInstallation(canonicalId);
-        if (info.isInstalled) {
-          setLocalInstallations((prev) => ({
-            ...prev,
-            [canonicalId]: info,
-            [appId]: info,
-          }));
-          setInstallProgressMap((prev) => {
-            const copy = { ...prev };
-            delete copy[canonicalId];
-            delete copy[appId];
-            return copy;
-          });
-        }
-      }, 4000);
+    if (result.success && result.installed) {
+      const info = await checkAppInstallation(appId);
+      setLocalInstallations(prev => ({ ...prev, [appId]: info }));
     }
+
   };
 
   const handleCheckAppInstallation = async (appId: string): Promise<boolean> => {
@@ -297,12 +241,7 @@ export default function App() {
         [canonicalId]: info,
         [appId]: info,
       }));
-      setInstallProgressMap((prev) => {
-        const copy = { ...prev };
-        delete copy[canonicalId];
-        delete copy[appId];
-        return copy;
-      });
+
       return true;
     }
     return false;

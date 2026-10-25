@@ -5,6 +5,8 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const safeUpgrade = require('./safe-upgrade.cjs');
+const windowsUpgrade = require('./windows-upgrade.cjs');
 
 let staticServer = null;
 
@@ -107,21 +109,16 @@ function buildExecutableCandidates(appDefinition) {
     ))
   ));
 
-  const developmentCandidates = appDefinition.executableNames.flatMap((executableName) => [
-    path.resolve(__dirname, '..', '..', appDefinition.projectFolder, 'dist-electron', 'win-unpacked', executableName),
-    path.resolve(__dirname, '..', '..', 'Alco Ecosystem', appDefinition.projectFolder, 'dist-electron', 'win-unpacked', executableName),
-    path.resolve(__dirname, '..', '..', appDefinition.id || '', 'dist-electron', 'win-unpacked', executableName),
-  ]);
-
   return [
     process.env[appDefinition.envKey],
     ...installedCandidates,
-    ...developmentCandidates,
+
   ].filter(Boolean);
 }
 
 function resolveDesktopAppExecutable(appDefinition) {
-  return getUniqueExistingPaths(buildExecutableCandidates(appDefinition))[0] || null;
+  const candidates = getUniqueExistingPaths(buildExecutableCandidates(appDefinition)).filter(p => !/[\\/](?:dist-electron|win-unpacked)[\\/]/i.test(p) && path.basename(p).toLowerCase() !== 'electron.exe');
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 /**
@@ -147,6 +144,14 @@ function calculateFileSha256(filePath) {
  * @param {number} maxRedirects
  * @returns {Promise<{ destPath: string, totalBytes: number }>}
  */
+function isTrustedInstallerTransport(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    return u.protocol === 'https:' && !u.username && !u.password && !u.port &&
+      ['github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'github-releases.githubusercontent.com'].includes(u.hostname);
+  } catch { return false; }
+}
+
 function downloadFileWithProgress(rawUrl, destPath, onProgress, maxRedirects = 7) {
   return new Promise((resolve, reject) => {
     if (maxRedirects < 0) {
@@ -188,6 +193,13 @@ function downloadFileWithProgress(rawUrl, destPath, onProgress, maxRedirects = 7
       let lastReportTime = 0;
 
       const fileStream = fs.createWriteStream(destPath);
+      fileStream.on('error', () => {
+        req.destroy(new Error('Gagal menulis installer ke cache lokal.'));
+      });
+      res.on('aborted', () => {
+        fileStream.destroy();
+        req.destroy(new Error('Unduhan installer terputus.'));
+      });
 
       res.on('data', (chunk) => {
         bytesReceived += chunk.length;
@@ -565,6 +577,7 @@ function getAppDefinition(appId, customApp) {
 // 1. Check if a single desktop app is installed on the system
 ipcMain.handle('check-app-installed', async (_event, appId) => {
   const appDefinition = getAppDefinition(appId);
+  if (appDefinition.id === safeUpgrade.identity.catalogId) return windowsUpgrade.discoverWindows(buildExecutableCandidates(appDefinition));
   const executablePath = resolveDesktopAppExecutable(appDefinition);
   if (!executablePath) {
     console.log('[ALCO Status Audit]', {
@@ -599,6 +612,10 @@ ipcMain.handle('check-all-apps-installed', async () => {
     if (processedKeys.has(canonicalId)) continue;
     processedKeys.add(canonicalId);
 
+    if (canonicalId === safeUpgrade.identity.catalogId) {
+      const info = await windowsUpgrade.discoverWindows(buildExecutableCandidates(appDef));
+      results[canonicalId] = info; results['content-engine'] = info; continue;
+    }
     const executablePath = resolveDesktopAppExecutable(appDef);
     if (executablePath) {
       const localVersion = getLocalAppVersion(appDef, executablePath);
@@ -926,43 +943,15 @@ function isTargetAppRunning(appDefinition) {
  * Gracefully terminates the running target application before installer runs.
  * Uses exact process names only to prevent unintended termination of other apps.
  */
-function closeTargetAppProcess(appDefinition) {
-  if (process.platform !== 'win32') return Promise.resolve({ success: true, closed: true });
-
-  return new Promise((resolve) => {
-    const specificNames = (appDefinition.executableNames || []).filter(
-      (name) => name && !['electron.exe', 'alco hub.exe', 'alco-hub.exe'].includes(name.toLowerCase())
-    );
-    if (specificNames.length === 0) return resolve({ success: true, closed: false });
-
-    const filterArgs = [];
-    for (const name of specificNames) {
-      filterArgs.push('/im', name);
-    }
-
-    const taskkill = spawn('taskkill', ['/f', ...filterArgs], { windowsHide: true, shell: false });
-    taskkill.on('close', () => {
-      // Allow Windows filesystem handles to release
-      setTimeout(async () => {
-        const stillRunning = await isTargetAppRunning(appDefinition);
-        if (stillRunning) {
-          setTimeout(async () => {
-            const finalCheck = await isTargetAppRunning(appDefinition);
-            resolve({ success: !finalCheck, stillRunning: finalCheck, closed: !finalCheck });
-          }, 500);
-        } else {
-          resolve({ success: true, stillRunning: false, closed: true });
-        }
-      }, 400);
-    });
-    taskkill.on('error', (err) => resolve({ success: false, error: err.message }));
-  });
+async function closeTargetAppProcess(appDefinition) {
+  // This legacy IPC must never bypass explicit confirmation or force termination.
+  return { success: false, error: 'Simpan pekerjaan dan tutup aplikasi secara manual sebelum mencoba lagi.' };
 }
 
 // IPC: Check if an app is currently running
 ipcMain.handle('check-app-running', async (_event, appId) => {
   const appDefinition = getAppDefinition(appId);
-  const isRunning = await isTargetAppRunning(appDefinition);
+  const isRunning = appDefinition.id === safeUpgrade.identity.catalogId ? await windowsUpgrade.running() : await isTargetAppRunning(appDefinition);
   return { isRunning, appName: appDefinition.label };
 });
 
@@ -975,7 +964,7 @@ ipcMain.handle('close-app-process', async (_event, appId) => {
 // IPC: Check local installer cache
 ipcMain.handle('get-installer-cache-info', async (_event, params) => {
   const { appId, version, sha256 } = params || {};
-  if (!appId) return { cached: false };
+  if (typeof appId !== 'string' || !safeUpgrade.parseVersion(version)) return { cached: false };
 
   const cacheDir = getInstallerCacheDir();
   const canonicalId = (appId || '').toLowerCase().trim();
@@ -1028,10 +1017,13 @@ ipcMain.handle('clear-installer-cache', async (_event, appId) => {
   if (!fs.existsSync(cacheDir)) return { success: true, deletedCount: 0 };
 
   const files = fs.readdirSync(cacheDir);
+  if (files.some(file => file.endsWith('.upgrade.lock'))) {
+    return { success: false, error: 'Cache terkunci selama upgrade atau memerlukan pemeriksaan sesi sebelumnya.' };
+  }
   const canonicalId = appId ? (appId || '').toLowerCase().trim().replace(/[^a-zA-Z0-9_-]/g, '_') : '';
 
   for (const file of files) {
-    if (!canonicalId || file.toLowerCase().includes(canonicalId.toLowerCase())) {
+    if (file.endsWith('.exe') && (!canonicalId || file.toLowerCase().includes(canonicalId.toLowerCase()))) {
       try {
         fs.unlinkSync(path.join(cacheDir, file));
         deletedCount++;
@@ -1041,392 +1033,59 @@ ipcMain.handle('clear-installer-cache', async (_event, appId) => {
   return { success: true, deletedCount };
 });
 
-// Set untuk mencegah eksekusi installer ganda secara bersamaan untuk aplikasi yang sama
-const activeInstallations = new Set();
-
-// 3. Generic installer download, SHA-256 integrity verification, reusable caching, and execution
+// Upgrade execution is owned by main; renderer metadata cannot approve installer behavior.
+const runUpgrade = windowsUpgrade.createWindowsRunner({
+  acquire: () => {
+    const lockPath = path.join(getInstallerCacheDir(), 'alco-content-engine.upgrade.lock');
+    let descriptor;
+    try { descriptor = fs.openSync(lockPath, 'wx'); }
+    catch { throw new Error('Upgrade terkunci oleh proses lain atau sesi sebelumnya. Pastikan tidak ada installer aktif lalu periksa file alco-content-engine.upgrade.lock di cache Hub secara manual.'); }
+    try { fs.writeSync(descriptor, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })); }
+    catch { fs.closeSync(descriptor); throw new Error('Gagal mencatat kunci upgrade. Periksa cache Hub secara manual.'); }
+    return () => { try { fs.closeSync(descriptor); fs.unlinkSync(lockPath); } catch { /* A retained lock requires manual inspection; never silently recover it. */ } };
+  },
+  prepare: async (params, status) => {
+    const cacheDir = getInstallerCacheDir();
+    const version = params.latestVersion.replace(/^v/, '');
+    const cached = path.join(cacheDir, safeUpgrade.identity.catalogId + '-' + version + '.exe');
+    if (!params.forceRedownload && fs.existsSync(cached)) {
+      status('VERIFYING');
+      if ((await calculateFileSha256(cached)).toLowerCase() === params.sha256.toLowerCase()) return cached;
+      fs.unlinkSync(cached);
+    }
+    status('DOWNLOADING');
+    const temporary = path.join(cacheDir, crypto.randomUUID() + '.download.tmp');
+    try {
+      await downloadFileWithProgress(params.downloadUrl, temporary, progress => status('DOWNLOADING', progress));
+      status('VERIFYING');
+      if ((await calculateFileSha256(temporary)).toLowerCase() !== params.sha256.toLowerCase()) throw new Error('SHA-256 installer tidak cocok.');
+      fs.renameSync(temporary, cached);
+      return cached;
+    } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+  },
+  verify: async (file, hash) => {
+    const cacheDir = fs.realpathSync(getInstallerCacheDir());
+    const actual = fs.realpathSync(file);
+    return path.dirname(actual).toLowerCase() === cacheDir.toLowerCase() && path.extname(actual).toLowerCase() === '.exe'
+      && fs.statSync(actual).isFile() && (await calculateFileSha256(actual)).toLowerCase() === hash.toLowerCase();
+  },
+  confirm: async () => {
+    const result = await dialog.showMessageBox({ type: 'question', buttons: ['Batal', 'Simpan lalu tutup aplikasi'], defaultId: 0, cancelId: 0,
+      title: 'Konfirmasi update ALCO Content Engine',
+      message: 'ALCO Hub akan meminta ALCO Content Engine ditutup. Simpan pekerjaan terlebih dahulu. Lanjutkan?',
+      detail: 'Jika aplikasi menunggu penyimpanan atau tetap aktif, upgrade akan dihentikan. Tidak ada penghentian paksa.' });
+    return result.response === 1;
+  },
+});
 ipcMain.handle('download-and-install-app', async (event, params) => {
-  const { appId, downloadUrl, sha256, latestVersion, appName, releaseTag, repoOwner, repoName, forceRedownload } = params || {};
-
-  if (!appId) {
-    return { success: false, error: 'App ID tidak ditemukan.' };
-  }
-
-  const canonicalAppId = (appId || '').toLowerCase().trim();
-  if (activeInstallations.has(canonicalAppId)) {
-    return {
-      success: false,
-      error: `Proses instalasi untuk ${appName || canonicalAppId} sedang berjalan. Harap tunggu hingga installer selesai dibuka.`,
-    };
-  }
-
-  activeInstallations.add(canonicalAppId);
-
-  const cleanExpectedHash = (sha256 || '').trim().toLowerCase();
-  if (!cleanExpectedHash || cleanExpectedHash.length !== 64) {
-    activeInstallations.delete(canonicalAppId);
-    return {
-      success: false,
-      error: 'SHA-256 Checksum resmi tidak ditemukan atau tidak valid (harus 64 karakter hex).',
-    };
-  }
-
-  const sendProgress = (status, progress, bytesReceived = 0, totalBytes = 0, message = '', error = '', extra = {}) => {
-    try {
-      event.sender.send('install-progress', {
-        appId,
-        status,
-        progress,
-        bytesReceived,
-        totalBytes,
-        message,
-        error,
-        ...extra,
-      });
-    } catch (e) {
-      console.warn('[Electron] Failed to send install-progress IPC event:', e);
-    }
-  };
-
-  const appDefinition = getAppDefinition(appId, { name: appName });
-  const cacheDir = getInstallerCacheDir();
-  const sanitizedAppId = canonicalAppId.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const cleanVersion = (latestVersion || '').trim().replace(/^v/i, '') || '1.0.0';
-
-  // Path where verified installer is permanently stored for reuse
-  const cachedInstallerPath = path.join(cacheDir, `${sanitizedAppId}-${cleanVersion}.exe`);
-  const tempDir = path.join(app.getPath('temp'), 'alco-hub-downloads');
-  try {
-    fs.mkdirSync(tempDir, { recursive: true });
-  } catch {}
-  const tempDownloadPath = path.join(tempDir, `${sanitizedAppId}-${Date.now()}.download.tmp`);
-
-  // Diagnostic Audit: Determine installed state before installation
-  const beforeExePath = resolveDesktopAppExecutable(appDefinition);
-  const beforeVersionInfo = beforeExePath ? getLocalAppVersion(appDefinition, beforeExePath) : { version: null };
-  const installedVersionBefore = beforeVersionInfo.version || 'NOT_INSTALLED';
-
-  console.log('[ALCO Installer Audit - Start]', {
-    'TARGET APP': appDefinition.label || appId,
-    'TARGET EXE': (appDefinition.executableNames || []).join(', '),
-    'INSTALLED VERSION BEFORE': installedVersionBefore,
-    'INSTALLER CACHE PATH': cachedInstallerPath,
+  if (!params || typeof params.appId !== 'string') return { success: false, error: 'App ID tidak valid.' };
+  const messages = { UPDATE_AVAILABLE: 'Update tersedia', DOWNLOADING: 'Mengunduh installer', VERIFYING: 'Memverifikasi SHA-256',
+    AWAITING_USER_CONFIRMATION: 'Menunggu persetujuan penutupan', CLOSING_APPLICATION: 'Menunggu aplikasi ditutup', INSTALLING: 'Memasang update',
+    VERIFYING_INSTALLATION: 'Memverifikasi versi terpasang', UPDATE_SUCCESS: 'Update berhasil diverifikasi', UPDATE_FAILED: 'Update gagal' };
+  return runUpgrade(params, (status, detail = {}) => {
+    try { event.sender.send('install-progress', { appId: getAppDefinition(params.appId).id, status, message: messages[status],
+      progress: status === 'UPDATE_SUCCESS' ? 100 : 0, bytesReceived: 0, totalBytes: 0, ...detail }); } catch {}
   });
-
-  try {
-    // =========================================================================
-    // STEP 1: Check Reusable Local Installer Cache
-    // =========================================================================
-    let cacheStatus = 'CACHE MISS';
-    let cacheMissReason = 'FILE_NOT_FOUND';
-
-    if (forceRedownload) {
-      cacheMissReason = 'FORCE_REDOWNLOAD_REQUESTED';
-    } else if (fs.existsSync(cachedInstallerPath)) {
-      sendProgress('verifying', 100, 0, 0, 'Memeriksa cache installer lokal yang tersedia...');
-      const cachedHash = await calculateFileSha256(cachedInstallerPath);
-
-      if (cachedHash.toLowerCase() === cleanExpectedHash) {
-        cacheStatus = 'CACHE HIT';
-        console.log('[ALCO Installer Audit - Cache]', {
-          'CACHE HIT / MISS': 'CACHE HIT',
-          'INSTALLER CACHE PATH': cachedInstallerPath,
-          'SHA256 MATCH': true,
-        });
-
-        sendProgress('installer-ready', 100, 0, 0, `Installer v${cleanVersion} siap dipasang (menggunakan cache lokal).`, '', {
-          fromCache: true,
-          installerPath: cachedInstallerPath,
-        });
-
-        // STEP 1b: Check & Close Running Old App Process Safely
-        const runningBefore = await isTargetAppRunning(appDefinition);
-        let closeResult = { success: true, closed: false };
-        let runningAfter = runningBefore;
-
-        if (runningBefore) {
-          sendProgress('closing-app', 100, 0, 0, `Menutup proses ${appDefinition.label} yang sedang aktif...`);
-          closeResult = await closeTargetAppProcess(appDefinition);
-          runningAfter = await isTargetAppRunning(appDefinition);
-        }
-
-        console.log('[ALCO Installer Audit - Process Control (Cache Hit)]', {
-          'TARGET APP': appDefinition.label,
-          'RUNNING BEFORE CLOSE': runningBefore,
-          'CLOSE RESULT': closeResult.success ? 'SUCCESS' : 'FAILED',
-          'RUNNING AFTER CLOSE': runningAfter,
-        });
-
-        // STEP 1c: Launch Installer
-        sendProgress('launching-installer', 100, 0, 0, 'Membuka installer Windows Setup...');
-        let launchSuccess = false;
-        let launchError = null;
-
-        try {
-          if (process.platform === 'win32') {
-            const child = spawn(cachedInstallerPath, [], {
-              detached: true,
-              stdio: 'ignore',
-            });
-            child.unref();
-            launchSuccess = true;
-          } else {
-            const openErr = await shell.openPath(cachedInstallerPath);
-            if (openErr) throw new Error(openErr);
-            launchSuccess = true;
-          }
-        } catch (spawnErr) {
-          launchError = spawnErr?.message || String(spawnErr);
-          const openErr = await shell.openPath(cachedInstallerPath);
-          if (openErr) {
-            throw new Error(`Gagal membuka installer: ${spawnErr?.message || openErr}`);
-          }
-          launchSuccess = true;
-        }
-
-        console.log('[ALCO Installer Audit - Launch (Cache Hit)]', {
-          'INSTALLER LAUNCH RESULT': launchSuccess ? 'SUCCESS' : 'FAILED',
-          'LAUNCH ERROR': launchError || 'NONE',
-          'INSTALLED VERSION BEFORE': installedVersionBefore,
-        });
-
-        sendProgress('installer-opened', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.', '', {
-          fromCache: true,
-          installerPath: cachedInstallerPath,
-        });
-
-        return {
-          success: true,
-          fromCache: true,
-          installerPath: cachedInstallerPath,
-          message: 'Installer lokal berhasil diverifikasi dan dijalankan.',
-        };
-      } else {
-        cacheMissReason = 'SHA_MISMATCH';
-        console.log(`[ALCO Installer Audit - Cache] Checksum mismatch in cache. Deleting stale file.`);
-        try { fs.unlinkSync(cachedInstallerPath); } catch {}
-      }
-    }
-
-    console.log('[ALCO Installer Audit - Cache]', {
-      'CACHE HIT / MISS': 'CACHE MISS',
-      'REASON': cacheMissReason,
-      'INSTALLER CACHE PATH': cachedInstallerPath,
-    });
-
-    // =========================================================================
-    // STEP 2: Resolve Release Asset from GitHub
-    // =========================================================================
-    sendProgress('downloading', 0, 0, 0, 'Memverifikasi rilis aktual di GitHub Releases...');
-
-    let actualDownloadUrl = downloadUrl;
-    let actualReleaseTag = releaseTag || '';
-    let actualAssetFilename = '';
-
-    try {
-      const resolution = await resolveGitHubReleaseAsset({
-        appId,
-        latestVersion,
-        metadataDownloadUrl: downloadUrl,
-        appName,
-        repoOwner: repoOwner || 'yaladzan92-creator',
-        repoName: repoName || 'Alco-Releases',
-      });
-
-      if (resolution.found && resolution.downloadUrl) {
-        actualDownloadUrl = resolution.downloadUrl;
-        actualReleaseTag = resolution.releaseTag;
-        actualAssetFilename = resolution.assetFilename;
-      }
-    } catch (resErr) {
-      console.warn('[Electron] Dynamic release asset resolution warning:', resErr);
-    }
-
-    console.log('[Electron Download Diagnostic]', {
-      appId,
-      latestVersion: latestVersion || 'unknown',
-      metadataDownloadUrl: downloadUrl || 'none',
-      resolvedDownloadUrl: actualDownloadUrl || 'none',
-      releaseTag: actualReleaseTag || 'none',
-      assetFilename: actualAssetFilename || 'none',
-    });
-
-    if (!actualDownloadUrl || !isValidSecureUrl(actualDownloadUrl)) {
-      activeInstallations.delete(canonicalAppId);
-      const errorMsg = 'Installer resmi tidak ditemukan di GitHub Releases.';
-      sendProgress('failed', 0, 0, 0, '', errorMsg);
-      return { success: false, error: errorMsg };
-    }
-
-    // =========================================================================
-    // STEP 3: Download Binary Stream with Progress
-    // =========================================================================
-    sendProgress('downloading', 0, 0, 0, 'Mengunduh installer resmi dari GitHub Releases...');
-
-    try {
-      await downloadFileWithProgress(actualDownloadUrl, tempDownloadPath, ({ bytesReceived, totalBytes, progress }) => {
-        sendProgress('downloading', progress, bytesReceived, totalBytes, `Mengunduh installer (${progress}%)...`);
-      });
-    } catch (downloadErr) {
-      if (
-        downloadErr &&
-        (downloadErr.message?.includes('404') || downloadErr.message?.includes('Status 404')) &&
-        actualDownloadUrl === downloadUrl
-      ) {
-        sendProgress('downloading', 0, 0, 0, 'Mencari asset rilis alternatif di GitHub...');
-        const fallbackRes = await resolveGitHubReleaseAsset({
-          appId,
-          latestVersion,
-          metadataDownloadUrl: downloadUrl,
-          appName,
-          repoOwner: repoOwner || 'yaladzan92-creator',
-          repoName: repoName || 'Alco-Releases',
-        });
-
-        if (fallbackRes.found && fallbackRes.downloadUrl && fallbackRes.downloadUrl !== actualDownloadUrl) {
-          actualDownloadUrl = fallbackRes.downloadUrl;
-          actualReleaseTag = fallbackRes.releaseTag;
-          actualAssetFilename = fallbackRes.assetFilename;
-
-          await downloadFileWithProgress(actualDownloadUrl, tempDownloadPath, ({ bytesReceived, totalBytes, progress }) => {
-            sendProgress('downloading', progress, bytesReceived, totalBytes, `Mengunduh installer (${progress}%)...`);
-          });
-        } else {
-          throw new Error('Installer resmi tidak ditemukan di GitHub Releases.');
-        }
-      } else {
-        if (downloadErr.message?.includes('404')) {
-          throw new Error('Installer resmi tidak ditemukan di GitHub Releases.');
-        }
-        throw downloadErr;
-      }
-    }
-
-    // =========================================================================
-    // STEP 4: SHA-256 Integrity Verification
-    // =========================================================================
-    sendProgress('verifying', 100, 0, 0, 'Memverifikasi checksum SHA-256 binary installer...');
-
-    const computedHash = await calculateFileSha256(tempDownloadPath);
-
-    if (computedHash.toLowerCase() !== cleanExpectedHash) {
-      // Clean up corrupt or unverified downloaded file immediately
-      try {
-        if (fs.existsSync(tempDownloadPath)) fs.unlinkSync(tempDownloadPath);
-      } catch {}
-
-      const errorMsg = 'Installer verification failed. Checksum SHA-256 tidak cocok dengan metadata rilis resmi.';
-      sendProgress('failed', 0, 0, 0, '', errorMsg);
-      return {
-        success: false,
-        error: errorMsg,
-        shaMismatch: true,
-      };
-    }
-
-    // =========================================================================
-    // STEP 5: Store in Persistent Installer Cache
-    // =========================================================================
-    try {
-      if (fs.existsSync(cachedInstallerPath)) fs.unlinkSync(cachedInstallerPath);
-      fs.renameSync(tempDownloadPath, cachedInstallerPath);
-    } catch {
-      fs.copyFileSync(tempDownloadPath, cachedInstallerPath);
-      try { fs.unlinkSync(tempDownloadPath); } catch {}
-    }
-
-    sendProgress('installer-ready', 100, 0, 0, `Installer v${cleanVersion} berhasil diverifikasi dan disimpan ke cache.`, '', {
-      fromCache: true,
-      installerPath: cachedInstallerPath,
-    });
-
-    // =========================================================================
-    // STEP 6: Check & Close Running Old App Process Safely
-    // =========================================================================
-    const runningBeforeFresh = await isTargetAppRunning(appDefinition);
-    let closeResultFresh = { success: true, closed: false };
-    let runningAfterFresh = runningBeforeFresh;
-
-    if (runningBeforeFresh) {
-      sendProgress('closing-app', 100, 0, 0, `Menutup proses ${appDefinition.label} yang sedang aktif...`);
-      closeResultFresh = await closeTargetAppProcess(appDefinition);
-      runningAfterFresh = await isTargetAppRunning(appDefinition);
-    }
-
-    console.log('[ALCO Installer Audit - Process Control (Fresh Download)]', {
-      'TARGET APP': appDefinition.label,
-      'RUNNING BEFORE CLOSE': runningBeforeFresh,
-      'CLOSE RESULT': closeResultFresh.success ? 'SUCCESS' : 'FAILED',
-      'RUNNING AFTER CLOSE': runningAfterFresh,
-    });
-
-    // =========================================================================
-    // STEP 7: Launch Installer
-    // =========================================================================
-    sendProgress('launching-installer', 100, 0, 0, 'Membuka installer Windows Setup...');
-    let launchSuccessFresh = false;
-    let launchErrorFresh = null;
-
-    try {
-      if (process.platform === 'win32') {
-        const child = spawn(cachedInstallerPath, [], {
-          detached: true,
-          stdio: 'ignore',
-        });
-        child.unref();
-        launchSuccessFresh = true;
-      } else {
-        const openErr = await shell.openPath(cachedInstallerPath);
-        if (openErr) throw new Error(openErr);
-        launchSuccessFresh = true;
-      }
-    } catch (spawnErr) {
-      launchErrorFresh = spawnErr?.message || String(spawnErr);
-      const openErr = await shell.openPath(cachedInstallerPath);
-      if (openErr) {
-        throw new Error(`Gagal membuka installer: ${spawnErr?.message || openErr}`);
-      }
-      launchSuccessFresh = true;
-    }
-
-    console.log('[ALCO Installer Audit - Launch (Fresh Download)]', {
-      'INSTALLER LAUNCH RESULT': launchSuccessFresh ? 'SUCCESS' : 'FAILED',
-      'LAUNCH ERROR': launchErrorFresh || 'NONE',
-      'INSTALLED VERSION BEFORE': installedVersionBefore,
-    });
-
-    sendProgress('installer-opened', 100, 0, 0, 'Installer telah dibuka. Selesaikan langkah instalasi di komputer Anda.', '', {
-      fromCache: true,
-      installerPath: cachedInstallerPath,
-    });
-
-    return {
-      success: true,
-      fromCache: false,
-      installerPath: cachedInstallerPath,
-      message: 'Installer berhasil diunduh, diverifikasi, dan dijalankan.',
-      resolvedDownloadUrl: actualDownloadUrl,
-      releaseTag: actualReleaseTag,
-      assetFilename: actualAssetFilename,
-    };
-  } catch (err) {
-    try {
-      if (fs.existsSync(tempDownloadPath)) fs.unlinkSync(tempDownloadPath);
-    } catch {}
-
-    const rawMessage = err instanceof Error ? err.message : 'Terjadi kesalahan saat proses download & install.';
-    const finalErrorMessage = rawMessage.includes('404')
-      ? 'Installer resmi tidak ditemukan di GitHub Releases.'
-      : rawMessage;
-
-    // Notice: We do NOT delete cachedInstallerPath if it already exists and was verified!
-    sendProgress('failed', 0, 0, 0, '', finalErrorMessage, {
-      installerPath: fs.existsSync(cachedInstallerPath) ? cachedInstallerPath : undefined,
-    });
-    return { success: false, error: finalErrorMessage };
-  } finally {
-    activeInstallations.delete(canonicalAppId);
-  }
 });
 
 // 4. Open Desktop App
