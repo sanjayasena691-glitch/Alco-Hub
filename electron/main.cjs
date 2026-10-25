@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const safeUpgrade = require('./safe-upgrade.cjs');
 const windowsUpgrade = require('./windows-upgrade.cjs');
+const { createFirstInstallRunner } = require('./first-install.cjs');
 
 let staticServer = null;
 
@@ -574,70 +575,23 @@ function getAppDefinition(appId, customApp) {
   };
 }
 
-// 1. Check if a single desktop app is installed on the system
-ipcMain.handle('check-app-installed', async (_event, appId) => {
-  const appDefinition = getAppDefinition(appId);
-  if (appDefinition.id === safeUpgrade.identity.catalogId) return windowsUpgrade.discoverWindows(buildExecutableCandidates(appDefinition));
-  const executablePath = resolveDesktopAppExecutable(appDefinition);
-  if (!executablePath) {
-    console.log('[ALCO Status Audit]', {
-      'TARGET APP': appDefinition.label || appId,
-      'INSTALLED VERSION AFTER': 'NOT_FOUND',
-      'EXECUTABLE PATH': 'NONE',
-    });
-    return { isInstalled: false, version: null, executablePath: null };
-  }
-  const localVersion = getLocalAppVersion(appDefinition, executablePath);
-  console.log('[ALCO Status Audit]', {
-    'TARGET APP': appDefinition.label || appId,
-    'INSTALLED VERSION AFTER': localVersion.version || 'UNKNOWN',
-    'EXECUTABLE PATH': executablePath,
-    'VERSION SOURCE': localVersion.source || 'NONE',
-  });
-  return {
-    isInstalled: true,
-    version: localVersion.version,
-    executablePath,
-  };
-});
-
-// 2. Check all known apps installation statuses
+function installationDefinition(appId, appName) {
+  if (typeof appId !== 'string' || !/^(?:alco-)?[a-z0-9]+(?:-[a-z0-9]+)*$/.test(appId)) throw new Error('App ID tidak valid.');
+  const definition = getAppDefinition(appId, { name: appName });
+  if (!/^ALCO [A-Za-z0-9][A-Za-z0-9 ._-]{0,100}$/.test(definition.label)) throw new Error('Identitas aplikasi tidak valid.');
+  return definition;
+}
+async function readInstallation(definition) {
+  return windowsUpgrade.discoverForApp(definition, buildExecutableCandidates(definition));
+}
+ipcMain.handle('check-app-installed', async (_event, appId) => readInstallation(installationDefinition(appId)));
 ipcMain.handle('check-all-apps-installed', async () => {
   const results = {};
-  const processedKeys = new Set();
-
-  for (const key of Object.keys(desktopApps)) {
-    const appDef = desktopApps[key];
-    const canonicalId = appDef.id || key;
-    if (processedKeys.has(canonicalId)) continue;
-    processedKeys.add(canonicalId);
-
-    if (canonicalId === safeUpgrade.identity.catalogId) {
-      const info = await windowsUpgrade.discoverWindows(buildExecutableCandidates(appDef));
-      results[canonicalId] = info; results['content-engine'] = info; continue;
-    }
-    const executablePath = resolveDesktopAppExecutable(appDef);
-    if (executablePath) {
-      const localVersion = getLocalAppVersion(appDef, executablePath);
-      const res = {
-        isInstalled: true,
-        version: localVersion.version,
-        executablePath,
-      };
-      results[canonicalId] = res;
-      results[key] = res;
-      if (canonicalId.replace(/^alco-/, '') !== canonicalId) {
-        results[canonicalId.replace(/^alco-/, '')] = res;
-      }
-    } else {
-      const res = {
-        isInstalled: false,
-        version: null,
-        executablePath: null,
-      };
-      results[canonicalId] = res;
-      results[key] = res;
-    }
+  for (const definition of Object.values(desktopApps)) {
+    if (results[definition.id]) continue;
+    const info = await readInstallation(definition);
+    results[definition.id] = info;
+    results[definition.id.replace(/^alco-/, '')] = info;
   }
   return results;
 });
@@ -1034,9 +988,10 @@ ipcMain.handle('clear-installer-cache', async (_event, appId) => {
 });
 
 // Upgrade execution is owned by main; renderer metadata cannot approve installer behavior.
-const runUpgrade = windowsUpgrade.createWindowsRunner({
-  acquire: () => {
-    const lockPath = path.join(getInstallerCacheDir(), 'alco-content-engine.upgrade.lock');
+const installerIO = {
+  acquire: (params = {}) => {
+    const id = params.appId || safeUpgrade.identity.catalogId;
+    const lockPath = path.join(getInstallerCacheDir(), id + '.upgrade.lock');
     let descriptor;
     try { descriptor = fs.openSync(lockPath, 'wx'); }
     catch { throw new Error('Upgrade terkunci oleh proses lain atau sesi sebelumnya. Pastikan tidak ada installer aktif lalu periksa file alco-content-engine.upgrade.lock di cache Hub secara manual.'); }
@@ -1047,7 +1002,7 @@ const runUpgrade = windowsUpgrade.createWindowsRunner({
   prepare: async (params, status) => {
     const cacheDir = getInstallerCacheDir();
     const version = params.latestVersion.replace(/^v/, '');
-    const cached = path.join(cacheDir, safeUpgrade.identity.catalogId + '-' + version + '.exe');
+    const cached = path.join(cacheDir, params.appId + '-' + version + '.exe');
     if (!params.forceRedownload && fs.existsSync(cached)) {
       status('VERIFYING');
       if ((await calculateFileSha256(cached)).toLowerCase() === params.sha256.toLowerCase()) return cached;
@@ -1076,33 +1031,49 @@ const runUpgrade = windowsUpgrade.createWindowsRunner({
       detail: 'Jika aplikasi menunggu penyimpanan atau tetap aktif, upgrade akan dihentikan. Tidak ada penghentian paksa.' });
     return result.response === 1;
   },
+};
+const runUpgrade = windowsUpgrade.createWindowsRunner(installerIO);
+const runFirstInstall = createFirstInstallRunner({ ...installerIO,
+  discover: params => readInstallation(installationDefinition(params.appId, params.appName)),
+  running: params => windowsUpgrade.runningForApp(installationDefinition(params.appId, params.appName)),
+  install: windowsUpgrade.install,
 });
+
 ipcMain.handle('download-and-install-app', async (event, params) => {
   if (!params || typeof params.appId !== 'string') return { success: false, error: 'App ID tidak valid.' };
-  const messages = { UPDATE_AVAILABLE: 'Update tersedia', DOWNLOADING: 'Mengunduh installer', VERIFYING: 'Memverifikasi SHA-256',
-    AWAITING_USER_CONFIRMATION: 'Menunggu persetujuan penutupan', CLOSING_APPLICATION: 'Menunggu aplikasi ditutup', INSTALLING: 'Memasang update',
+  if (!['install', 'upgrade'].includes(params.operation)) return { success: false, error: 'Pilih operasi install atau upgrade secara eksplisit.' };
+  let definition;
+  try { definition = installationDefinition(params.appId, params.appName); } catch (error) { return { success: false, error: error.message }; }
+  const progressAppId = params.appId; // Keep the renderer's catalog key while locking/caching by canonical identity.
+  params = { ...params, appId: definition.id };
+  const messages = { INSTALL_SUCCESS: 'Instalasi berhasil diverifikasi', INSTALL_FAILED: 'Instalasi gagal', UPDATE_AVAILABLE: 'Update tersedia', DOWNLOADING: 'Mengunduh installer', VERIFYING: 'Memverifikasi SHA-256',
+    AWAITING_USER_CONFIRMATION: 'Menunggu persetujuan penutupan', CLOSING_APPLICATION: 'Menunggu aplikasi ditutup', INSTALLING: params.operation === 'install' ? 'Menunggu wizard instalasi selesai' : 'Memasang update',
     VERIFYING_INSTALLATION: 'Memverifikasi versi terpasang', UPDATE_SUCCESS: 'Update berhasil diverifikasi', UPDATE_FAILED: 'Update gagal' };
-  return runUpgrade(params, (status, detail = {}) => {
-    try { event.sender.send('install-progress', { appId: getAppDefinition(params.appId).id, status, message: messages[status],
-      progress: status === 'UPDATE_SUCCESS' ? 100 : 0, bytesReceived: 0, totalBytes: 0, ...detail }); } catch {}
+  const run = params.operation === 'install' ? runFirstInstall : runUpgrade;
+  return run(params, (status, detail = {}) => {
+    try { event.sender.send('install-progress', { appId: progressAppId, operation: params.operation, status, message: messages[status],
+      progress: ['UPDATE_SUCCESS', 'INSTALL_SUCCESS'].includes(status) ? 100 : 0, bytesReceived: 0, totalBytes: 0, ...detail }); } catch {}
   });
 });
 
 // 4. Open Desktop App
 ipcMain.handle('open-desktop-app', async (_event, appId) => {
-  const appDefinition = getAppDefinition(appId);
-  const executablePath = resolveDesktopAppExecutable(appDefinition);
+  const appDefinition = installationDefinition(appId);
+  const installation = await readInstallation(appDefinition);
+  const executablePath = installation.discoveryStatus === 'INSTALLED_KNOWN_VERSION' ? installation.executablePath : null;
   if (!executablePath) {
     return {
       success: false,
-      error: `${appDefinition.label} belum ditemukan di komputer ini. Silakan pasang installer terlebih dahulu melalui ALCO Hub.`,
+      error: installation.error || 'Lokasi dan identitas aplikasi belum terverifikasi. Periksa instalasi Windows sebelum membuka aplikasi.',
     };
   }
 
-  const errorMessage = await shell.openPath(executablePath);
-  return errorMessage
-    ? { success: false, error: errorMessage }
-    : { success: true };
+  try {
+    const errorMessage = await shell.openPath(executablePath);
+    return errorMessage ? { success: false, error: errorMessage } : { success: true };
+  } catch {
+    return { success: false, error: 'Windows gagal membuka executable aplikasi yang terverifikasi.' };
+  }
 });
 
 // ==========================================

@@ -1,5 +1,11 @@
 # Safe silent in-place upgrade — Phase 2A
 
+This document records the initial phase snapshot. See
+[integration corrections](safe-upgrade-integration-corrections.md) for the restored
+interactive first-install operation, shared UI progress handling, and registry-based
+Open App action. The historical restriction on all first installations below has
+been superseded; silent-upgrade approval and per-machine blockers remain.
+
 ## Confirmed causes and implementation
 
 The original main process had two duplicated installer launch paths. Both detached

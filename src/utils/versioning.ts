@@ -1,3 +1,4 @@
+import { getInstallProgressState } from './installProgress';
 import { compareVersions, parseVersion } from './upgradeVersion';
 /**
  * ALCO Hub - Semantic Versioning & Tag Utilities
@@ -172,15 +173,7 @@ export function evaluateAppStatus(
       };
     }
 
-    const isBusy = [
-      'UPDATE_AVAILABLE', 'DOWNLOADING', 'VERIFYING', 'AWAITING_USER_CONFIRMATION', 'CLOSING_APPLICATION', 'INSTALLING', 'VERIFYING_INSTALLATION',
-      'downloading',
-      'verifying',
-      'installer-ready',
-      'app-running',
-      'closing-app',
-      'launching-installer',
-    ].includes(progress.status);
+    const isBusy = getInstallProgressState(progress).busy;
 
     if (isBusy) {
       return {

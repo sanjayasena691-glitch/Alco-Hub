@@ -41,6 +41,7 @@ import {
   checkAllAppsInstallation,
   checkAppInstallation,
   startAppInstallation,
+  startAppUpgrade,
   subscribeToInstallProgress,
   launchDesktopApp,
 } from './services/installerService';
@@ -125,7 +126,7 @@ export default function App() {
         [progress.appId]: progress,
       }));
 
-      if (progress.status === 'UPDATE_SUCCESS') {
+      if (progress.status === 'UPDATE_SUCCESS' || progress.status === 'INSTALL_SUCCESS') {
         checkAppInstallation(progress.appId).then(info => setLocalInstallations(prev => ({ ...prev, [progress.appId]: info })));
       }
 
@@ -205,12 +206,13 @@ export default function App() {
     setIsCheckingUpdates(false);
   };
 
-  const handleInstallApp = async (app: EcosystemApp) => {
+  const handleInstallApp = async (app: EcosystemApp, operation: 'install' | 'upgrade' = 'install') => {
     const appId = app.appId || app.id;
     setInstallProgressMap((prev) => ({
       ...prev,
       [appId]: {
         appId,
+        operation,
         status: 'DOWNLOADING',
         progress: 0,
         bytesReceived: 0,
@@ -218,7 +220,8 @@ export default function App() {
       },
     }));
 
-    const result = await startAppInstallation(app, (prog) => {
+    const start = operation === 'install' ? startAppInstallation : startAppUpgrade;
+    const result = await start(app, (prog) => {
       setInstallProgressMap((prev) => ({
         ...prev,
         [appId]: prog,
@@ -284,25 +287,7 @@ export default function App() {
   };
 
   const handlePerformUpdate = (app: EcosystemApp) => {
-    // If installer download exists, trigger installer flow
-    if (app.downloadUrl && app.sha256) {
-      handleInstallApp(app);
-      return;
-    }
-
-    // Update local app version in catalog
-    const updatedApps = apps.map((a) => {
-      if (a.id === app.id) {
-        return {
-          ...a,
-          version: a.latestVersion,
-        };
-      }
-      return a;
-    });
-
-    saveCatalogToCache(updatedApps);
-    setApps(updatedApps);
+    void handleInstallApp(app, 'upgrade');
   };
 
   const coreApps = apps.filter((a) => a.packId === 'core-system');

@@ -3,7 +3,8 @@
  * Mengelola pembaruan aplikasi ekosistem ALCO.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
+import { getInstallProgressState } from '../utils/installProgress';
 import {
   RefreshCw,
   CheckCircle2,
@@ -17,7 +18,7 @@ import {
   AppInstallProgress,
 } from '../types';
 import { AppIcon } from './AppIcon';
-import { isAppUpdateAvailable, normalizeVersion, evaluateAppStatus } from '../utils/versioning';
+import { isAppUpdateAvailable, evaluateAppStatus } from '../utils/versioning';
 
 interface UpdatesViewProps {
   apps: EcosystemApp[];
@@ -38,29 +39,13 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
   onPerformUpdate,
   onInstallApp,
 }) => {
-  const [updatingAppId, setUpdatingAppId] = useState<string | null>(null);
-  const [updatedNotice, setUpdatedNotice] = useState<string | null>(null);
-
   const appsWithUpdates = apps.filter((app) => {
     const canonicalId = app.appId || app.id;
     const inst = localInstallations[canonicalId] || localInstallations[app.id];
-    return isAppUpdateAvailable(app, inst);
+    return isAppUpdateAvailable(app, inst) || Boolean(installProgressMap[canonicalId] || installProgressMap[app.id]);
   });
 
-  const handleUpdate = (app: EcosystemApp) => {
-    if (onInstallApp && app.downloadUrl && app.sha256) {
-      onInstallApp(app);
-      return;
-    }
-
-    setUpdatingAppId(app.id);
-    setTimeout(() => {
-      onPerformUpdate(app);
-      setUpdatingAppId(null);
-      setUpdatedNotice(`Aplikasi ${app.name} berhasil diperbarui ke versi v${app.latestVersion}.`);
-      setTimeout(() => setUpdatedNotice(null), 4000);
-    }, 1200);
-  };
+  const handleUpdate = (app: EcosystemApp) => onPerformUpdate(app);
 
   return (
     <div id="alco-updates-view" className="space-y-8 max-w-5xl">
@@ -87,18 +72,11 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
         </button>
       </div>
 
-      {updatedNotice && (
-        <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2.5 animate-in fade-in">
-          <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span className="font-medium">{updatedNotice}</span>
-        </div>
-      )}
-
       {/* List of Pending Updates */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            Pembaruan Tersedia ({appsWithUpdates.length})
+            Pembaruan dan Proses Instalasi ({appsWithUpdates.length})
           </h2>
         </div>
 
@@ -106,16 +84,10 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
           <div className="grid grid-cols-1 gap-4">
             {appsWithUpdates.map((app) => {
               const appId = app.appId || app.id;
-              const isUpdating = updatingAppId === app.id;
+              const installation = localInstallations[appId] || localInstallations[app.id];
               const progress = installProgressMap[appId] || installProgressMap[app.id];
-              const isDownloading = progress?.status === 'downloading';
-              const isVerifying = progress?.status === 'verifying';
-              const isInstallerReady = progress?.status === 'installer-ready';
-              const isClosingApp = progress?.status === 'closing-app' || progress?.status === 'app-running';
-              const isLaunching = progress?.status === 'launching-installer';
-              const isOpened = progress?.status === 'installer-opened';
-              const isFailed = progress?.status === 'failed' || progress?.status === 'installation-failed';
-              const isBusy = isDownloading || isVerifying || isInstallerReady || isClosingApp || isLaunching;
+              const state = getInstallProgressState(progress);
+              const { downloading: isDownloading, closing: isClosingApp, opened: isOpened, failed: isFailed, busy: isBusy } = state;
 
               return (
                 <div
@@ -137,12 +109,12 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
                         <div className="flex items-center gap-2">
                           <h3 className="text-base font-bold text-slate-900 dark:text-white">{app.name}</h3>
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/20">
-                            Update Available
+                            {state.label === 'Memproses instalasi' ? 'Update Available' : state.label}
                           </span>
                         </div>
                         <p className="text-xs text-slate-600 dark:text-slate-400">{app.functionLabel}</p>
                         <p className="text-xs font-mono text-slate-700 dark:text-slate-300 pt-1">
-                          Versi Saat Ini: <span className="text-slate-500 dark:text-slate-400 font-semibold">v{localInstallations[appId]?.version ? normalizeVersion(localInstallations[appId].version!) : normalizeVersion(app.version)}</span> → Versi Baru: <span className="text-emerald-600 dark:text-emerald-400 font-bold">v{normalizeVersion(app.latestVersion)}</span>
+                          Versi Saat Ini: <span className="text-slate-500 dark:text-slate-400 font-semibold">{installation?.version ? 'v' + installation.version : 'Belum terverifikasi'}</span> → Versi Baru: <span className="text-emerald-600 dark:text-emerald-400 font-bold">v{app.latestVersion}</span>
                         </p>
                       </div>
                     </div>
@@ -156,16 +128,12 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
                         >
                           <RotateCw className="w-4 h-4 animate-spin text-amber-600 dark:text-amber-400" />
                           <span>
-                            {isDownloading
-                              ? `Mengunduh (${progress?.progress || 0}%)...`
-                              : isVerifying
-                                ? 'Memverifikasi Checksum...'
-                                : isClosingApp
-                                  ? 'Menutup Aplikasi Lama...'
-                                  : 'Membuka Setup...'}
+                            {isDownloading ? `Mengunduh (${progress?.progress || 0}%)...` : state.label}
                           </span>
                         </button>
-                      ) : isOpened ? (
+                      ) : state.success ? (
+                        <span role="status">{state.label}</span>
+                      ) : isOpened || state.waiting ? (
                         <button
                           type="button"
                           onClick={() => onCheckUpdate()}
@@ -177,17 +145,19 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
                       ) : isFailed ? (
                         <button
                           type="button"
-                          onClick={() => handleUpdate(app)}
+                          onClick={() => progress?.operation === 'install' || progress?.status === 'INSTALL_FAILED'
+                            ? onInstallApp?.(app) : handleUpdate(app)}
+                          disabled={(progress?.operation === 'install' || progress?.status === 'INSTALL_FAILED') && !onInstallApp}
                           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md cursor-pointer"
                         >
                           <RefreshCw className="w-3.5 h-3.5" />
-                          <span>Pasang Ulang (Cache)</span>
+                          <span>{progress?.operation === 'install' || progress?.status === 'INSTALL_FAILED' ? 'Coba Instalasi Lagi' : 'Coba Update Lagi'}</span>
                         </button>
                       ) : (
                         <button
                           type="button"
                           onClick={() => handleUpdate(app)}
-                          disabled={isUpdating}
+                          disabled={!app.downloadUrl || !app.sha256}
                           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold tracking-tight transition-all shadow-md disabled:opacity-50 cursor-pointer"
                         >
                           <Download className="w-4 h-4" />
@@ -219,9 +189,9 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
 
                   {isFailed && (
                     <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-500/30 text-xs text-rose-800 dark:text-rose-200">
-                      <p className="font-bold">Update Belum Tuntas: {progress?.error || 'Instalasi dibatalkan atau terkendala.'}</p>
+                      <p className="font-bold">{state.label}: {progress?.error || 'Instalasi dibatalkan atau terkendala.'}</p>
                       <p className="text-[11px] text-rose-600 dark:text-rose-300 mt-0.5">
-                        File installer tersimpan di cache lokal. Anda dapat mengklik "Pasang Ulang (Cache)" untuk menjalankan ulang setup.
+                        Periksa alasan kegagalan. Mencoba lagi tetap memakai pemeriksaan keamanan upgrade yang sama.
                       </p>
                     </div>
                   )}
@@ -239,7 +209,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
         ) : (
           <div className="text-center py-12 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-3">
             <CheckCircle2 className="w-10 h-10 text-emerald-500 dark:text-emerald-400 mx-auto" />
-            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200">Semua Aplikasi Sudah Menggunakan Versi Terbaru</h3>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200">Tidak Ada Update Terverifikasi yang Tersedia</h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
               Tidak ada pembaruan baru yang tertunda. ALCO Hub akan memberi tahu Anda secara otomatis saat owner merilis versi baru.
             </p>
@@ -256,7 +226,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
           {apps.map((app) => {
             const canonicalId = app.appId || app.id;
             const inst = localInstallations[canonicalId] || localInstallations[app.id];
-            const evalRes = evaluateAppStatus(app, inst);
+            const evalRes = evaluateAppStatus(app, inst, installProgressMap[canonicalId] || installProgressMap[app.id]);
             return (
               <div key={app.id} className="p-3.5 flex items-center justify-between text-xs">
                 <div>
@@ -265,7 +235,7 @@ export const UpdatesView: React.FC<UpdatesViewProps> = ({
                 </div>
                 <div className="text-right">
                   <span className="font-mono text-slate-700 dark:text-slate-300 font-semibold">
-                    v{evalRes.installedVersion || normalizeVersion(app.version)}
+                    {evalRes.installedVersion ? 'v' + evalRes.installedVersion : 'Versi belum diketahui'}
                   </span>
                   <span
                     className={`text-[10px] block font-medium ${

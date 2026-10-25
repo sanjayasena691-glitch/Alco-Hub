@@ -1,3 +1,4 @@
+import { getInstallProgressState } from '../utils/installProgress';
 /**
  * ALCO Hub - Application Card Component
  * Priority hierarchy:
@@ -171,16 +172,12 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
   const isFree = app.pricingType === 'free';
 
   // Live installer progress states
-  const isDownloading = (installProgress?.status === 'downloading' || installProgress?.status === 'DOWNLOADING');
-  const isVerifying = (installProgress?.status === 'verifying' || installProgress?.status === 'VERIFYING' || installProgress?.status === 'VERIFYING_INSTALLATION');
-  const isInstallerReady = installProgress?.status === 'installer-ready';
+  const progressState = getInstallProgressState(installProgress);
+  const { downloading: isDownloading, verifying: isVerifying, ready: isInstallerReady,
+    closing: isClosingApp, opened: isInstallerOpened, waiting: isWaitingCompletion,
+    failed: isFailed, busy: isBusy } = progressState;
   const isAppRunning = installProgress?.status === 'app-running';
-  const isClosingApp = (installProgress?.status === 'closing-app' || installProgress?.status === 'CLOSING_APPLICATION');
-  const isLaunching = (installProgress?.status === 'launching-installer' || installProgress?.status === 'INSTALLING' || installProgress?.status === 'UPDATE_AVAILABLE' || installProgress?.status === 'AWAITING_USER_CONFIRMATION');
-  const isInstallerOpened = installProgress?.status === 'installer-opened';
-  const isWaitingCompletion = installProgress?.status === 'waiting-completion';
-  const isFailed = (installProgress?.status === 'failed' || installProgress?.status === 'UPDATE_FAILED') || installProgress?.status === 'installation-failed';
-  const isBusy = isDownloading || isVerifying || isInstallerReady || isAppRunning || isClosingApp || isLaunching;
+  const isLaunching = progressState.installing || progressState.awaiting || installProgress?.status === 'UPDATE_AVAILABLE';
   const hasCachedInstaller = Boolean(installProgress?.fromCache || installProgress?.installerPath);
 
   const statusEval = evaluateAppStatus(app, installation, installProgress);
@@ -235,6 +232,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
         />
       )}
 
+      {progressState.success && <p role="status" className="text-xs text-emerald-700">{progressState.label}</p>}
       <div className="space-y-4">
         {/* Top Header Row: Icon & Status / Price */}
         <div className="flex items-start justify-between gap-3">
@@ -285,7 +283,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-purple-50 dark:bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-500/30 animate-pulse"
               >
                 <FileCheck2 className="w-3 h-3 text-purple-600 dark:text-purple-400 shrink-0" />
-                <span>{installProgress?.message || 'Memverifikasi SHA-256'}</span>
+                <span>{progressState.label}</span>
               </span>
             ) : isInstallerReady ? (
               <span
@@ -301,7 +299,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30"
               >
                 <RefreshCw className="w-3 h-3 text-amber-600 dark:text-amber-400 animate-spin shrink-0" />
-                <span>Menutup App Aktif...</span>
+                <span>{progressState.label}</span>
               </span>
             ) : isLaunching ? (
               <span
@@ -309,7 +307,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30"
               >
                 <RefreshCw className="w-3 h-3 text-amber-600 dark:text-amber-400 animate-spin shrink-0" />
-                <span>{installProgress?.message || 'Memproses installer'}</span>
+                <span>{progressState.label}</span>
               </span>
             ) : isInstallerOpened ? (
               <span
@@ -452,7 +450,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
           <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-500/30 space-y-1 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2.5">
             <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-spin shrink-0" />
             <div>
-              <p className="font-bold text-slate-900 dark:text-white">Menutup Aplikasi Lama...</p>
+              <p className="font-bold text-slate-900 dark:text-white">{progressState.label}</p>
               <p className="text-[11px] text-amber-700 dark:text-amber-300">Menutup proses aplikasi target agar update file berjalan lancar.</p>
             </div>
           </div>
@@ -591,9 +589,7 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
             <span>
               {isDownloading
                 ? `Mengunduh (${installProgress?.progress || 0}%)...`
-                : isVerifying
-                  ? (installProgress?.message || 'Memverifikasi SHA-256...')
-                  : (installProgress?.message || 'Memproses installer...')}
+                : progressState.label}
             </span>
           </button>
         ) : statusEval.status === 'INSTALLATION_BLOCKED' ? (
@@ -633,7 +629,8 @@ export const ApplicationCard: React.FC<ApplicationCardProps> = ({
             <button
               id={`app-btn-retry-${app.id}`}
               type="button"
-              onClick={() => onInstallApp && onInstallApp(app)}
+              onClick={() => installProgress?.operation === 'upgrade' || installProgress?.status === 'UPDATE_FAILED'
+                ? onUpdateApp?.(app) : onInstallApp?.(app)}
               className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold tracking-tight transition-all shadow-md active:scale-[0.99] cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />

@@ -121,12 +121,13 @@ export interface StartInstallOptions {
  * 2. Jika belum ada, download binary stream dengan progress bar
  * 3. Verifikasi SHA-256 binary installer
  * 4. Simpan ke reusable cache lokal
- * 5. Deteksi & tutup aplikasi lama yang sedang aktif secara aman
- * 6. Jalankan installer Windows Setup
+ * Main memisahkan instalasi pertama interaktif dari upgrade terjaga.
+ * Hasil sukses hanya berasal dari verifikasi aplikasi terpasang.
  */
-export async function startAppInstallation(
+async function startAppOperation(
   app: EcosystemApp,
-  onProgress?: (progress: AppInstallProgress) => void,
+  onProgress: ((progress: AppInstallProgress) => void) | undefined,
+  operation: 'install' | 'upgrade',
   options: StartInstallOptions = {}
 ): Promise<InstallResult> {
   const appId = app.appId || app.id;
@@ -157,7 +158,8 @@ export async function startAppInstallation(
       if (onProgress) {
         onProgress({
           appId,
-          status: 'UPDATE_FAILED',
+          operation,
+          status: operation === 'install' ? 'INSTALL_FAILED' : 'UPDATE_FAILED',
           progress: 0,
           bytesReceived: 0,
           totalBytes: 0,
@@ -172,7 +174,8 @@ export async function startAppInstallation(
       if (onProgress) {
         onProgress({
           appId,
-          status: 'UPDATE_FAILED',
+          operation,
+          status: operation === 'install' ? 'INSTALL_FAILED' : 'UPDATE_FAILED',
           progress: 0,
           bytesReceived: 0,
           totalBytes: 0,
@@ -187,7 +190,8 @@ export async function startAppInstallation(
       if (onProgress) {
         onProgress({
           appId,
-          status: 'UPDATE_FAILED',
+          operation,
+          status: operation === 'install' ? 'INSTALL_FAILED' : 'UPDATE_FAILED',
           progress: 0,
           bytesReceived: 0,
           totalBytes: 0,
@@ -198,6 +202,7 @@ export async function startAppInstallation(
     }
 
     const result = await window.alcoHub.downloadAndInstallApp({
+      operation,
       appId,
       downloadUrl,
       sha256,
@@ -214,7 +219,8 @@ export async function startAppInstallation(
     if (!result.success && result.error && onProgress) {
       onProgress({
         appId,
-        status: 'UPDATE_FAILED',
+        operation,
+        status: operation === 'install' ? 'INSTALL_FAILED' : 'UPDATE_FAILED',
         progress: 0,
         bytesReceived: 0,
         totalBytes: 0,
@@ -230,7 +236,8 @@ export async function startAppInstallation(
     if (onProgress) {
       onProgress({
         appId,
-        status: 'UPDATE_FAILED',
+        operation,
+        status: operation === 'install' ? 'INSTALL_FAILED' : 'UPDATE_FAILED',
         progress: 0,
         bytesReceived: 0,
         totalBytes: 0,
@@ -241,6 +248,13 @@ export async function startAppInstallation(
   } finally {
     inFlightInstalls.delete(canonicalId);
   }
+}
+
+export function startAppInstallation(app: EcosystemApp, onProgress?: (progress: AppInstallProgress) => void, options: StartInstallOptions = {}) {
+  return startAppOperation(app, onProgress, 'install', options);
+}
+export function startAppUpgrade(app: EcosystemApp, onProgress?: (progress: AppInstallProgress) => void, options: StartInstallOptions = {}) {
+  return startAppOperation(app, onProgress, 'upgrade', options);
 }
 
 /**

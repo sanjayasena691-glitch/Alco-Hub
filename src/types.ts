@@ -248,6 +248,8 @@ export type UpgradeStatus = 'UPDATE_AVAILABLE' | 'DOWNLOADING' | 'VERIFYING' | '
 
 export type InstallStatus =
   | UpgradeStatus
+  | 'INSTALL_SUCCESS'
+  | 'INSTALL_FAILED'
   | 'idle'
   | 'downloading'
   | 'verifying'
@@ -275,6 +277,7 @@ export interface LocalInstallerCacheInfo {
 }
 
 export interface AppInstallProgress {
+  operation?: 'install' | 'upgrade';
   appId: string;
   status: InstallStatus;
   progress: number; // 0 - 100
@@ -361,6 +364,7 @@ declare global {
       checkAppInstalled: (appId: string) => Promise<AppLocalInstallation>;
       checkAllAppsInstalled: () => Promise<Record<string, AppLocalInstallation>>;
       downloadAndInstallApp: (params: {
+        operation: 'install' | 'upgrade';
         appId: string;
         downloadUrl: string;
         sha256: string;
